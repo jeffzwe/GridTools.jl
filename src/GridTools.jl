@@ -9,21 +9,42 @@ using Base: @propagate_inbounds
 
 import Base.Broadcast: Extruded, Style, BroadcastStyle, ArrayStyle ,Broadcasted
 
-export Cell, K , Edge, E2C, Field, Dimension, Connectivity, neighbor_sum, where
+export Cell, K , Edge, E2C, Field, Dimension, Connectivity, neighbor_sum, where, broadcast
 
 # Lib ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
+"""
+    abstract type Dimension
+
+# Examples
+```julia-repl
+julia> struct Cell_ <: Dimension end
+julia> Cell = Cell_()
+```
+"""
 abstract type Dimension end
 
 # Field struct --------------------------------------------------------------------
 
 # TODO: check for #dimension at compile time and not runtime
 # TODO: <: AbstractArray{T,N} is not needed... but then we have to define our own length and iterate function for Fields
+"""
+    Field(dims::Tuple, data::Array, broadcast_dims::Tuple)
+
+# Examples
+```julia-repl
+julia> new_field = Field((Cell, K), fill(1.0, (3,2)))
+3x2  Field with dims (Main.GridTools.Cell_(), Main.GridTools.K_()) and broadcasted_dims (Main.GridTools.Cell_(), Main.GridTools.K_()):
+ 1.0  1.0
+ 1.0  1.0
+ 1.0  1.0
+```
+"""
 struct Field{T, N, T2 <: Tuple{Vararg{<:Dimension}}, T3 <: Tuple{Vararg{<:Dimension}}} <: AbstractArray{T,N}
     dims::T2
     data::Array{T,N}
     broadcast_dims::T3
-
+    
     function Field(dims::T2, data::Array{T,N}, broadcast_dims::T3 = dims) where {T, N, T2 <: Tuple{Vararg{<:Dimension}}, T3 <: Tuple{Vararg{<:Dimension}}}
         @assert length(dims) == ndims(data)
         return new{T,N,T2,T3}(dims, data, broadcast_dims)
@@ -35,17 +56,26 @@ Base.size(F::Field)::Tuple = size(F.data)
 @propagate_inbounds Base.setindex!(F::Field{T,N}, val, inds::Vararg{Int,N}) where {T,N} = F.data[inds...] = val
 Base.showarg(io::IO, F::Field, toplevel) = print(io, " Field with dims ", F.dims, " and broadcasted_dims ", F.broadcast_dims)
 
+# TODO: Sure that this does the right thing?
 function (field_call::Field)(field_in::Field)::Field
+    @assert maximum(field_in) <= length(field_call) && minimum(field_in) >= 0
     return Field(field_in.dims, map(x -> x == 0 ? 0 : getindex(field_call.data, Int.(x)), field_in.data))
 end
 
-# TODO: returns new Field. If to manipulate existing field make field mutable
-function broadcast(f::Field, b_dims::D)::Field where D <: Tuple{Vararg{<:Dimension}}
-    return Field(f.dims, f.data, b_dims)
-end
 
 # Connectivity struct ------------------------------------------------------------
+"""
+    Connectivity(data::Array, source::Tuple, target::Tuple, dims::Int)
 
+# Examples
+```julia-repl
+julia> new_connectivity = Connectivity(fill(1.0, (3,2)), (Cell,), (Edge, E2C), 2)
+3x2  Field with dims (Main.GridTools.Cell_(), Main.GridTools.K_()) and broadcasted_dims (Main.GridTools.Cell_(), Main.GridTools.K_()):
+ 1.0  1.0
+ 1.0  1.0
+ 1.0  1.0
+```
+"""
 struct Connectivity
     data::Array{Int64, 2}
     source::Tuple{Vararg{<:Dimension}}
@@ -53,6 +83,7 @@ struct Connectivity
     dims::Int64
 end
 
+# TODO: Sure that this does the right thing?
 function (conn_call::Connectivity)(neighbor::Int64 = -1)::Field
     if neighbor == -1
         return Field(conn_call.target, conn_call.data)
@@ -64,25 +95,61 @@ end
 
 # Built-ins ----------------------------------------------------------------------
 
+
+# TODO: returns new Field. If to manipulate existing field make field mutable or make broadcast_dim an array
+"""
+    broadcast(f::Field, b_dims::Tuple)
+
+Sets the broadcast dimension of Field f to b_dims
+"""
+function broadcast(f::Field, b_dims::D)::Field where D <: Tuple{Vararg{<:Dimension}}
+    return Field(f.dims, f.data, b_dims)
+end
+
+"""
+    neighbor_sum(f::Field; axis::Dimension)
+
+Sums along the axis dimension. Outputs a field with dimensions size(f.dims)-1.
+"""
 function neighbor_sum(field_in::Field; axis::Dimension)::Field
     dim = findall(x -> x == axis, field_in.dims)[1]
     return Field((field_in.dims[1:dim-1]..., field_in.dims[dim+1:end]...), dropdims(sum(field_in.data, dims=dim), dims=dim)) 
 end
 
 
+"""
+    where(mask::Field, true, false)
+
+The 'where' loops over each entry of the mask and returns values corresponding to the same indexes of either the true or the false branch.
+
+# Arguments
+- `mask::Field`: a field with eltype Boolean
+- `true`: a tuple, a field, or a scalar
+- `false`: a tuple, a field, or a scalar
+
+# Examples
+```julia-repl
+julia> mask = Field((Cell, K), rand(Bool, (3,3)))
+3x3  Field with dims (Cell_(), K_()) and broadcasted_dims (Cell_(), K_()):
+ 1  0  0
+ 0  1  0
+ 1  1  1
+julia> a = Field((Cell, K), fill(1.0, (3,3)));
+julia> b = Field((Cell, K), fill(2.0, (3,3)));
+julia> where(mask, a, b)
+3x3  Field with dims (Cell_(), K_()) and broadcasted_dims (Cell_(), K_()):
+ 1.0  2.0  2.0
+ 2.0  1.0  2.0
+ 1.0  1.0  1.0
+```
+
+The `where` function builtin also allows for nesting of tuples. In this scenario, it will first perform an unrolling:
+`where(mask, ((a, b), (b, a)), ((c, d), (d, c)))` -->  `where(mask, (a, b), (c, d))` and `where(mask, (b, a), (d, c))` and then combine results to match the return type:
+"""
+where(mask::Field, t1::Tuple, t2::Tuple)::Field = map(x -> whereit(mask, x[1], x[2]), zip(t1, t2))
 @inbounds where(mask::Field, a::Field, scal::Real)::Field = Field(a.dims, ifelse(mask.data, a.data, scal))
 @inbounds where(mask::Field, scal::Real, a::Field)::Field = Field(a.dims, ifelse(mask.data, a.data, scal))
 @inbounds where(mask::Field, a::Field, b::Field)::Field = Field(a.dims, ifelse.(mask.data, a.data, b.data))
-"""
-    where(mask, tuple1, tupl2)
-
-This function takes 3 input arguments:
-    mask: a field with dtype boolean
-    true branch: a tuple, a field, or a scalar
-    false branch: a tuple, a field, or a scalar
-The where loops over each entry of the mask and returns values corresponding to the same indexes of either the true or the false branch.
-"""
-where(mask::Field, t1::Tuple, t2::Tuple)::Field = map(x -> whereit(mask, x[1], x[2]), zip(t1, t2))
 
 
 # Broadcast ---------------------------------------------------------------------
@@ -135,15 +202,14 @@ end
 
 
 # Checks dimension and broadcast combatibility of all fields
-@inline Base.axes(bc::Broadcasted{ArrayStyle{Field}}) =              combine_axes(bc.args...)
+@inline Base.axes(bc::Broadcasted{ArrayStyle{Field}}) =               combine_axes(bc.args...)
 @inline _combine_axes(A::Field, bc::Broadcasted{ArrayStyle{Field}}) = combine_axes((A.dims, axes(A), A.broadcast_dims), axes(bc))
 @inline _combine_axes(bc::Broadcasted{ArrayStyle{Field}}, B::Field) = combine_axes(axes(bc), (B.dims, axes(B), B.broadcast_dims))
-@inline combine_axes(A::Field, B::Field) =                           combine_axes((A.dims, axes(A), A.broadcast_dims), (B.dims, axes(B), B.broadcast_dims))
+@inline combine_axes(A::Field, B::Field) =                            combine_axes((A.dims, axes(A), A.broadcast_dims), (B.dims, axes(B), B.broadcast_dims))
 @inline combine_axes(A::Field, t::Tuple{}) = (A.dims, axes(A), A.broadcast_dims)
 @inline combine_axes(t::Tuple{}, A::Field) = (A.dims, axes(A), A.broadcast_dims)
 @inline function combine_axes(A::Tuple, B::Tuple)
     length(A[1]) > length(B[1]) ? (A,B) = (B,A) : nothing  # swap A and B       
-    
     # A,B = (dims, axes(data), broadcast_dims)
     @assert issubset(A[1], B[1]) "Dimension Mismatch between the Dimensions of the two Fields"
     @assert issubset(B[1], A[3]) "Dimension Mismatch between the broadcasted Dimensions of the two Fields"

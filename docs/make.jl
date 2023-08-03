@@ -7,7 +7,10 @@ makedocs(
     doctest = false,
     sitename = "GridTools",
     format = Documenter.HTML(),
-    modules = [GridTools]
+    modules = [GridTools],
+    pages = [
+ 		"Home" => "index.md",
+    ]
 )
 
 
