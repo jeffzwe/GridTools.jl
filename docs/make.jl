@@ -4,6 +4,7 @@ using Documenter
 using GridTools
 
 makedocs(
+    doctest = false
     sitename = "GridTools",
     format = Documenter.HTML(),
     modules = [GridTools]
