@@ -1,0 +1,3 @@
+var documenterSearchIndex = {"docs":
+[{"location":"#GridTools.jl","page":"GridTools.jl","title":"GridTools.jl","text":"","category":"section"},{"location":"","page":"GridTools.jl","title":"GridTools.jl","text":"where(mask::Field, t1::Tuple, t2::Tuple)","category":"page"},{"location":"#GridTools.where-Tuple{Field, Tuple, Tuple}","page":"GridTools.jl","title":"GridTools.where","text":"where(mask, tuple1, tupl2)\n\nThis function takes 3 input arguments:     mask: a field with dtype boolean     true branch: a tuple, a field, or a scalar     false branch: a tuple, a field, or a scalar The where loops over each entry of the mask and returns values corresponding to the same indexes of either the true or the false branch.\n\n\n\n\n\n","category":"method"}]
+}
