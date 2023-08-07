@@ -182,7 +182,7 @@ end
         matching_dims = get_dim_ind(A[1], B[1])
         @assert A[2] == B[2][matching_dims] "Dimension Mismatch between the data Dimensions of the two Fields"
         return B
-    elseif !isempty(intersect(A[1],B[1]))
+    elseif #!isempty(intersect(A[1],B[1]))  or other condition to merge existing overlapping dimensions
         matching_dimsA = get_dim_ind(intersect(A[1],B[1]),A[1])
         matching_dimsB = get_dim_ind(intersect(A[1],B[1]),B[1])
         @assert A[2][matching_dimsA] == B[2][matching_dimsB] "Dimension Mismatch between the data Dimensions of the two Fields"

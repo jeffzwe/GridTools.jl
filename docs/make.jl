@@ -18,6 +18,7 @@ makedocs(
 
 deploydocs(
     repo = "github.com/jeffzwe/GridTools.jl.git",
+    devbranch = "main",
 )
 
 
