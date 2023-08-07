@@ -44,6 +44,16 @@ struct Field{T, N, T2 <: Tuple{Vararg{<:Dimension}}, T3 <: Tuple{Vararg{<:Dimens
     dims::T2
     data::Array{T,N}
     broadcast_dims::T3
+
+    # function Field(dims::Dimension, data::Array{T,N}, broadcast_dims::Dimension = dims) where  {T, N}
+    #     @assert ndims(data) == 1
+    #     return Field((dims,), data, (broadcast_dims,))
+    # end
+
+    # function Field(dims::Dimension, data::Array{T,N}, broadcast_dims::T3 = dims) where  {T, N, T3 <: Tuple{Vararg{<:Dimension}}}
+    #     @assert ndims(data) == 1
+    #     return Field((dims,), data, (broadcast_dims,))
+    # end
     
     function Field(dims::T2, data::Array{T,N}, broadcast_dims::T3 = dims) where {T, N, T2 <: Tuple{Vararg{<:Dimension}}, T3 <: Tuple{Vararg{<:Dimension}}}
         @assert length(dims) == ndims(data)
@@ -56,7 +66,7 @@ Base.size(F::Field)::Tuple = size(F.data)
 @propagate_inbounds Base.setindex!(F::Field{T,N}, val, inds::Vararg{Int,N}) where {T,N} = F.data[inds...] = val
 Base.showarg(io::IO, F::Field, toplevel) = print(io, " Field with dims ", F.dims, " and broadcasted_dims ", F.broadcast_dims)
 
-# TODO: Sure that this does the right thing?
+# TODO: Sure that this does the right thing? Add to documentation of Field
 function (field_call::Field)(field_in::Field)::Field
     @assert maximum(field_in) <= length(field_call) && minimum(field_in) >= 0
     return Field(field_in.dims, map(x -> x == 0 ? 0 : getindex(field_call.data, Int.(x)), field_in.data))
@@ -69,11 +79,11 @@ end
 
 # Examples
 ```julia-repl
-julia> new_connectivity = Connectivity(fill(1.0, (3,2)), (Cell,), (Edge, E2C), 2)
+julia> new_connectivity = Connectivity(fill(1, (3,2)), Cell, (Edge, E2C), 2)
 3x2  Field with dims (Main.GridTools.Cell_(), Main.GridTools.K_()) and broadcasted_dims (Main.GridTools.Cell_(), Main.GridTools.K_()):
- 1.0  1.0
- 1.0  1.0
- 1.0  1.0
+ 1  1
+ 1  1
+ 1  1
 ```
 """
 struct Connectivity
@@ -81,9 +91,22 @@ struct Connectivity
     source::Tuple{Vararg{<:Dimension}}
     target::Tuple{Vararg{<:Dimension}}
     dims::Int64
+
+    # function Connectivity(data::Array{Int64, 2}, source::Dimension, target::Dimension, dims::Int64)
+    #     return Connectivity(data, (source,), (target,), dims)
+    # end
+    # function Connectivity(data::Array{Int64, 2}, source::Dimension, target::Tuple{Vararg{<:Dimension}}, dims::Int64)
+    #     return Connectivity(data, (source,), target, dims)
+    # end
+    # function Connectivity(data::Array{Int64, 2}, source::Tuple{Vararg{<:Dimension}}, target::Dimension, dims::Int64)
+    #     return Connectivity(data, source, (target,), dims)
+    # end
+    # function Connectivity(data::Array{Int64, 2}, source::Tuple{Vararg{<:Dimension}}, target::Tuple{Vararg{<:Dimension}}, dims::Int64)
+    #     return new(data, source, target, dims)
+    # end
 end
 
-# TODO: Sure that this does the right thing?
+# TODO: Sure that this does the right thing? Add to documentation of Connectivity
 function (conn_call::Connectivity)(neighbor::Int64 = -1)::Field
     if neighbor == -1
         return Field(conn_call.target, conn_call.data)
@@ -116,7 +139,9 @@ function neighbor_sum(field_in::Field; axis::Dimension)::Field
     return Field((field_in.dims[1:dim-1]..., field_in.dims[dim+1:end]...), dropdims(sum(field_in.data, dims=dim), dims=dim)) 
 end
 
-
+@inbounds where(mask::Field, a::Field, scal::Real)::Field = Field(a.dims, ifelse(mask.data, a.data, scal))
+@inbounds where(mask::Field, scal::Real, a::Field)::Field = Field(a.dims, ifelse(mask.data, a.data, scal))
+@inbounds where(mask::Field, a::Field, b::Field)::Field = Field(a.dims, ifelse.(mask.data, a.data, b.data))
 """
     where(mask::Field, true, false)
 
@@ -146,10 +171,8 @@ julia> where(mask, a, b)
 The `where` function builtin also allows for nesting of tuples. In this scenario, it will first perform an unrolling:
 `where(mask, ((a, b), (b, a)), ((c, d), (d, c)))` -->  `where(mask, (a, b), (c, d))` and `where(mask, (b, a), (d, c))` and then combine results to match the return type:
 """
-where(mask::Field, t1::Tuple, t2::Tuple)::Field = map(x -> whereit(mask, x[1], x[2]), zip(t1, t2))
-@inbounds where(mask::Field, a::Field, scal::Real)::Field = Field(a.dims, ifelse(mask.data, a.data, scal))
-@inbounds where(mask::Field, scal::Real, a::Field)::Field = Field(a.dims, ifelse(mask.data, a.data, scal))
-@inbounds where(mask::Field, a::Field, b::Field)::Field = Field(a.dims, ifelse.(mask.data, a.data, b.data))
+where(mask::Field, t1::Tuple, t2::Tuple)::Field = map(x -> where(mask, x[1], x[2]), zip(t1, t2))
+
 
 
 # Broadcast ---------------------------------------------------------------------
@@ -203,8 +226,8 @@ end
 
 # Checks dimension and broadcast combatibility of all fields
 @inline Base.axes(bc::Broadcasted{ArrayStyle{Field}}) =               combine_axes(bc.args...)
-@inline _combine_axes(A::Field, bc::Broadcasted{ArrayStyle{Field}}) = combine_axes((A.dims, axes(A), A.broadcast_dims), axes(bc))
-@inline _combine_axes(bc::Broadcasted{ArrayStyle{Field}}, B::Field) = combine_axes(axes(bc), (B.dims, axes(B), B.broadcast_dims))
+@inline combine_axes(A::Field, bc::Broadcasted{ArrayStyle{Field}}) = combine_axes((A.dims, axes(A), A.broadcast_dims), axes(bc))
+@inline combine_axes(bc::Broadcasted{ArrayStyle{Field}}, B::Field) = combine_axes(axes(bc), (B.dims, axes(B), B.broadcast_dims))
 @inline combine_axes(A::Field, B::Field) =                            combine_axes((A.dims, axes(A), A.broadcast_dims), (B.dims, axes(B), B.broadcast_dims))
 @inline combine_axes(A::Field, t::Tuple{}) = (A.dims, axes(A), A.broadcast_dims)
 @inline combine_axes(t::Tuple{}, A::Field) = (A.dims, axes(A), A.broadcast_dims)

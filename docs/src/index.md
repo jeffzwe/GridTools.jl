@@ -2,5 +2,10 @@
 
 
 ```@docs
-where(mask::Field, t1::Tuple, t2::Tuple)
+Dimension
+Field
+Connectivity
+GridTools.where
+neighbor_sum
+GridTools.broadcast
 ```
