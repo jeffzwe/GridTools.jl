@@ -198,3 +198,9 @@ end
     end
     
 end
+
+
+# PyCall Snippets
+
+config = py"config"
+
