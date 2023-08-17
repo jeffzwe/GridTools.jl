@@ -142,9 +142,9 @@ function neighbor_sum(field_in::Field; axis::Dimension)::Field
     return Field((field_in.dims[1:dim-1]..., field_in.dims[dim+1:end]...), dropdims(sum(field_in.data, dims=dim), dims=dim)) 
 end
 
-@inbounds where(mask::Field, a::Field, scal::Real)::Field = Field(a.dims, ifelse(mask.data, a.data, scal))
-@inbounds where(mask::Field, scal::Real, a::Field)::Field = Field(a.dims, ifelse(mask.data, a.data, scal))
-@inbounds where(mask::Field, a::Field, b::Field)::Field = Field(a.dims, ifelse.(mask.data, a.data, b.data))
+@inbounds where(mask::Field, a::Field, scal::Real)::Field = ifelse.(mask, a, scal)
+@inbounds where(mask::Field, scal::Real, a::Field)::Field = ifelse.(mask, a, scal)
+@inbounds where(mask::Field, a::Field, b::Field)::Field = ifelse.(mask, a, b)
 """
     where(mask::Field, true, false)
 

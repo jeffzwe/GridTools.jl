@@ -2,6 +2,8 @@ using PyCall
 
 include("GridUser.jl")
 
+# import .GridTools: Dimension, Field, Connectivity
+
 atlas = pyimport("atlas4py")
 py"""
 from atlas4py import (

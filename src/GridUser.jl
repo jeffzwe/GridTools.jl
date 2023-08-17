@@ -17,3 +17,14 @@ Vertex = Vertex_()
 V2EDim = V2EDim_()
 E2VDim = E2VDim_()
 
+# V2V = 
+# E2V = 
+# V2E = 
+# K = 
+# Koff = 
+
+# V2V = FieldOffset("V2V", source=Vertex, target=(Vertex, V2VDim))
+# E2V = FieldOffset("E2V", source=Vertex, target=(Edge, E2VDim))
+# V2E = FieldOffset("V2E", source=Edge, target=(Vertex, V2EDim))
+# Koff = FieldOffset("Koff", source=K, target=(K,))
+
