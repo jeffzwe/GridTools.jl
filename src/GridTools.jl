@@ -123,14 +123,17 @@ end
 
 macro field_operator(expr::Expr)
 
+    unpack_dict(dict::Nothing) = nothing
     function unpack_dict(dict::Dict)
         for key in keys(dict)
             @eval $(Symbol(key)) = $dict[$key]
         end
     end
 
-    op = :(offset_provider::Dict)
-    push!(expr.args[1].args, op)
+    temp_exp = expr.args[1].args
+    new_exp = Expr(:parameters, Expr(:kw, :offset_provider, :nothing)) # version with named offset_provider = nothing
+    # new_exp = Expr(:parameters, :offset_provider) # version with named offset_provider
+    expr.args[1].args = [temp_exp[1], new_exp, temp_exp[2:end]...]
 
     temp_exp = expr.args[2].args
     new_exp = Expr(:call, unpack_dict, :offset_provider)

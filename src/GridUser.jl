@@ -17,7 +17,20 @@ Vertex = Vertex_()
 V2EDim = V2EDim_()
 E2VDim = E2VDim_()
 
+# @field_operator function hello(x::Integer,y::Integer)
+#     a = V2V
+#     b = E2V
+#     return x + y + a
+# end
 
+# offset_provider = Dict{String, Integer}(
+#                    "V2V" => 4,
+#                    "V2E" => 3,
+#                    "E2V" => 2,
+#                    "Koff" => 1  # TODO(tehrengruber): using K here gives a terrible compilation error. Improve in GT4Py!
+#                 )
+
+# GridTools.hello(1, 2, offset_provider = offset_provider)
 
 # V2V = 
 # E2V = 
