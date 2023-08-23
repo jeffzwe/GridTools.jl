@@ -9,7 +9,7 @@ using Base: @propagate_inbounds
 
 import Base.Broadcast: Extruded, Style, BroadcastStyle, ArrayStyle ,Broadcasted
 
-export Cell, K , Edge, E2C, Field, Dimension, Connectivity, neighbor_sum, where, broadcast
+export Cell, K , Edge, E2C, Field, Dimension, Connectivity, neighbor_sum, where, broadcast, @field_operator
 
 
 # Lib ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -121,6 +121,22 @@ end
 
 # Built-ins ----------------------------------------------------------------------
 
+macro field_operator(expr::Expr)
+
+    function unpack_dict(dict::Dict)
+        for key in keys(dict)
+            @eval $(Symbol(key)) = $dict[$key]
+        end
+    end
+
+    op = :(offset_provider::Dict)
+    push!(expr.args[1].args, op)
+
+    temp_exp = expr.args[2].args
+    new_exp = Expr(:call, unpack_dict, :offset_provider)
+    expr.args[2].args = [temp_exp[1:2]..., new_exp, temp_exp[3:end]...]
+    return expr
+end
 
 # TODO: returns new Field. If to manipulate existing field make field mutable or make broadcast_dim an array
 """
@@ -175,6 +191,7 @@ The `where` function builtin also allows for nesting of tuples. In this scenario
 `where(mask, ((a, b), (b, a)), ((c, d), (d, c)))` -->  `where(mask, (a, b), (c, d))` and `where(mask, (b, a), (d, c))` and then combine results to match the return type:
 """
 where(mask::Field, t1::Tuple, t2::Tuple)::Field = map(x -> where(mask, x[1], x[2]), zip(t1, t2))
+
 
 
 # Includes ------------------------------------------------------------------------------------------------------------------------------------

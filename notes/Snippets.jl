@@ -204,3 +204,56 @@ end
 
 config = py"config"
 
+
+
+# Macro offset_provider
+
+macro field_operator(expr::Expr)
+
+    function unpack_dict(dict::Dict)
+        for key in keys(dict)
+            @eval $(Symbol(key)) = $dict[$key]
+        end
+    end
+
+    op = :(offset_provider::Dict)
+    push!(expr.args[1].args, op)
+
+    temp_exp = expr.args[2].args
+    new_exp = Expr(:call, unpack_dict, :offset_provider)
+    expr.args[2].args = [temp_exp[1:2]..., new_exp, temp_exp[3:end]...]
+    expr
+end
+
+
+# write a macro that takes a function and creates a new one
+# that takes an additional argument, namely the offset_provider, brings the dictionary into scope, and
+# calls the original function. To get the function information either use Metaprogramming or other function
+# to extract information from a function description
+
+
+function hello(x::Integer,y::Integer)
+    a = V2V
+    b = E2V
+    return a + b
+end
+
+function unpack_dict(dict::Dict)
+    for key in keys(dict)
+        @eval $(Symbol(key)) = $dict[$key]
+    end
+end
+
+
+function hey(x::Integer)
+    for i in 1:10
+        x = x+i
+    end
+    return x
+end
+
+
+macro duh(fn)
+    fn.args[1].args[1] = Symbol("heyhey")
+    println(dump(fn))
+end
