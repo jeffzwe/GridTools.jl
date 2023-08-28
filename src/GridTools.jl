@@ -6,10 +6,12 @@ using BenchmarkTools
 using Profile
 using Debugger
 using Base: @propagate_inbounds
+using MacroTools
 
 import Base.Broadcast: Extruded, Style, BroadcastStyle, ArrayStyle ,Broadcasted
 
-export Cell, K , Edge, E2C, Field, Dimension, Connectivity, neighbor_sum, where, broadcast, @field_operator
+export Cell, K , Edge, E2C, Vertex, V2VDim, V2EDim, E2VDim, Cell_, K_, Edge_, E2C_, Vertex_, V2VDim_, V2EDim_, E2VDim_,
+Field, Dimension, Connectivity, neighbor_sum, max_over, min_over, where, broadcast, @field_operator
 
 
 # Lib ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -45,16 +47,6 @@ struct Field{T, N, T2 <: Tuple{Vararg{<:Dimension}}, T3 <: Tuple{Vararg{<:Dimens
     dims::T2
     data::Array{T,N}
     broadcast_dims::T3
-
-    # function Field(dims::Dimension, data::Array{T,N}, broadcast_dims::Dimension = dims) where  {T, N}
-    #     @assert ndims(data) == 1
-    #     return Field((dims,), data, (broadcast_dims,))
-    # end
-
-    # function Field(dims::Dimension, data::Array{T,N}, broadcast_dims::T3 = dims) where  {T, N, T3 <: Tuple{Vararg{<:Dimension}}}
-    #     @assert ndims(data) == 1
-    #     return Field((dims,), data, (broadcast_dims,))
-    # end
     
     function Field(dims::T2, data::Array{T,N}, broadcast_dims::T3 = dims) where {T, N, T2 <: Tuple{Vararg{<:Dimension}}, T3 <: Tuple{Vararg{<:Dimension}}}
         @assert length(dims) == ndims(data)
@@ -92,19 +84,6 @@ struct Connectivity
     source::Tuple{Vararg{<:Dimension}}
     target::Tuple{Vararg{<:Dimension}}
     dims::Integer
-
-    # function Connectivity(data::Array{Int64, 2}, source::Dimension, target::Dimension, dims::Int64)
-    #     return Connectivity(data, (source,), (target,), dims)
-    # end
-    # function Connectivity(data::Array{Int64, 2}, source::Dimension, target::Tuple{Vararg{<:Dimension}}, dims::Int64)
-    #     return Connectivity(data, (source,), target, dims)
-    # end
-    # function Connectivity(data::Array{Int64, 2}, source::Tuple{Vararg{<:Dimension}}, target::Dimension, dims::Int64)
-    #     return Connectivity(data, source, (target,), dims)
-    # end
-    # function Connectivity(data::Array{Int64, 2}, source::Tuple{Vararg{<:Dimension}}, target::Tuple{Vararg{<:Dimension}}, dims::Int64)
-    #     return new(data, source, target, dims)
-    # end
 end
 
 # TODO: Sure that this does the right thing? Add to documentation of Connectivity
@@ -118,7 +97,6 @@ function (conn_call::Connectivity)(neighbor::Integer = -1)::Field
 end
 
 
-
 # Built-ins ----------------------------------------------------------------------
 
 macro field_operator(expr::Expr)
@@ -130,15 +108,15 @@ macro field_operator(expr::Expr)
         end
     end
 
-    temp_exp = expr.args[1].args
-    new_exp = Expr(:parameters, Expr(:kw, :offset_provider, :nothing)) # version with named offset_provider = nothing
-    # new_exp = Expr(:parameters, :offset_provider) # version with named offset_provider
-    expr.args[1].args = [temp_exp[1], new_exp, temp_exp[2:end]...]
+    dict = splitdef(expr)
 
-    temp_exp = expr.args[2].args
+    # push!(dict[:kwargs], :(offset_provider::Dict)) # version with named offset_provider
+    push!(dict[:kwargs], :($(Expr(:kw, :(offset_provider::Dict), :nothing)))) # version with named offset_provider = nothing
+    
     new_exp = Expr(:call, unpack_dict, :offset_provider)
-    expr.args[2].args = [temp_exp[1:2]..., new_exp, temp_exp[3:end]...]
-    return expr
+    dict[:body] = [dict[:body].args[1:2]..., new_exp, dict[:body].args[3:end]...]
+
+    return combinedef(dict)
 end
 
 # TODO: returns new Field. If to manipulate existing field make field mutable or make broadcast_dim an array
@@ -151,6 +129,10 @@ function broadcast(f::Field, b_dims::D)::Field where D <: Tuple{Vararg{<:Dimensi
     return Field(f.dims, f.data, b_dims)
 end
 
+function broadcast(n::Number, b_dims::D)::Field where D <: Tuple{Vararg{<:Dimension}}
+    return Field(b_dims[1], fill(n, 1), b_dims)
+end
+
 """
     neighbor_sum(f::Field; axis::Dimension)
 
@@ -159,6 +141,16 @@ Sums along the axis dimension. Outputs a field with dimensions size(f.dims)-1.
 function neighbor_sum(field_in::Field; axis::Dimension)::Field
     dim = findall(x -> x == axis, field_in.dims)[1]
     return Field((field_in.dims[1:dim-1]..., field_in.dims[dim+1:end]...), dropdims(sum(field_in.data, dims=dim), dims=dim)) 
+end
+
+function max_over(field_in::Field; axis::Dimension)::Field
+    dim = findall(x -> x == axis, field_in.dims)[1]
+    return Field((field_in.dims[1:dim-1]..., field_in.dims[dim+1:end]...), dropdims(maximum(field_in.data, dims=dim), dims=dim)) 
+end
+
+function min_over(field_in::Field; axis::Dimension)::Field
+    dim = findall(x -> x == axis, field_in.dims)[1]
+    return Field((field_in.dims[1:dim-1]..., field_in.dims[dim+1:end]...), dropdims(minimum(field_in.data, dims=dim), dims=dim)) 
 end
 
 @inbounds where(mask::Field, a::Field, scal::Real)::Field = ifelse.(mask, a, scal)
@@ -200,6 +192,26 @@ where(mask::Field, t1::Tuple, t2::Tuple)::Field = map(x -> where(mask, x[1], x[2
 # Includes ------------------------------------------------------------------------------------------------------------------------------------
 
 include("CustBroadcast.jl")
+
+
+# Actually user defined but yeah... macros...
+
+struct Cell_ <: Dimension end
+struct K_ <: Dimension end
+struct Edge_ <: Dimension end
+struct E2C_ <: Dimension end
+struct Vertex_ <: Dimension end
+struct V2VDim_ <: Dimension end
+struct V2EDim_ <: Dimension end
+struct E2VDim_ <: Dimension end
+Cell = Cell_()
+K = K_()
+Edge = Edge_()
+E2C = E2C_()
+Vertex = Vertex_()
+V2VDim = V2VDim_()
+V2EDim = V2EDim_()
+E2VDim = E2VDim_()
 
 end
 

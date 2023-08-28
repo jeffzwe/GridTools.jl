@@ -1,9 +1,13 @@
 # Create custom broadcast style
 Base.BroadcastStyle(::Type{<:Field}) = Broadcast.ArrayStyle{Field}()
 
+@inline function Base.Broadcast.materialize!(dest, bc::Broadcasted{ArrayStyle{Field}})
+    return copyto!(dest, Base.Broadcast.instantiate(bc))
+end
+
 # Custom instantiate(): Dimension check and calculation of output dimension
 function Base.Broadcast.instantiate(bc::Broadcasted{ArrayStyle{Field}})
-    return Broadcasted{ArrayStyle{Field}}(bc.f, bc.args, axes(bc)[2])
+    return Broadcasted{ArrayStyle{Field}}(bc.f, bc.args, combine_axes(bc)[2])
 end
 
 # -----------------------------------------------------------------------------------------------------------------------------------------
@@ -13,17 +17,22 @@ end
 _axes(::Broadcasted, axes::Tuple) =                                     axes
 @inline _axes(bc::Broadcasted, ::Nothing)  =                            combine_axes(bc.args...)
 
-@inline combine_axes(A::Field, bc::Broadcasted{ArrayStyle{Field}}) =    combine_axes((A.dims, axes(A), A.broadcast_dims), axes(bc))
-@inline combine_axes(bc::Broadcasted{ArrayStyle{Field}}, B::Field) =    combine_axes(axes(bc), (B.dims, axes(B), B.broadcast_dims))
-@inline combine_axes(A::Field, B::Field) =                              combine_axes((A.dims, axes(A), A.broadcast_dims), (B.dims, axes(B), B.broadcast_dims))
-@inline combine_axes(t::Tuple, B::Field) =                              combine_axes(t, (B.dims, axes(B), B.broadcast_dims))
-@inline combine_axes(A::Field, B::Field, rest::Field ...) =             combine_axes(combine_axes((A.dims, axes(A), A.broadcast_dims), (B.dims, axes(B), B.broadcast_dims)), rest...)
-@inline combine_axes(t::Tuple, B::Field, rest::Field ...) =             combine_axes(combine_axes(t, (B.dims, axes(B), B.broadcast_dims)), rest...)
-@inline combine_axes(A::Field, t::Number) =                            (A.dims, axes(A), A.broadcast_dims)
-@inline combine_axes(t::Number, B::Field) =                            (B.dims, axes(B), B.broadcast_dims)
+# Helper function for combine_axes
+@inline get_dim_ind(dims::Tuple{}, b_dims::Tuple) =  ()
+@inline get_dim_ind(dims::Tuple, b_dims::Tuple) = [findall(x -> x == dims[1], b_dims)[1] , get_dim_ind(Base.tail(dims), b_dims)...]
+# Helper function for combine_axes
+@inline format(A::Field) = (A.dims, axes(A), A.broadcast_dims)
+@inline format(bc::Broadcasted{ArrayStyle{Field}}) = axes(bc)
+@inline format(x::Number) = nothing
+@inline format(t::Tuple) = t
+
+@inline combine_axes(i1, i2, rest...) = combine_axes(combine_axes(format(i1), format(i2)), rest...)
+@inline combine_axes(i, n::Nothing) = combine_axes(format(i))
+@inline combine_axes(n::Nothing, i) = combine_axes(format(i))
+@inline combine_axes(i) = format(i)
 @inline function combine_axes(A::Tuple, B::Tuple)
     length(A[1]) > length(B[1]) ? (A,B) = (B,A) : nothing  # swap A and B       
-    # A,B = (dims, axes(data), broadcast_dims)
+    # A,B are of the form (dims, axes(data), broadcast_dims)
     @assert issubset(A[1], B[1]) "Dimension Mismatch between the Dimensions of the two Fields"
     @assert issubset(B[1], A[3]) "Dimension Mismatch between the broadcasted Dimensions of the two Fields"
     matching_dims = get_dim_ind(A[1], B[1])
@@ -31,9 +40,6 @@ _axes(::Broadcasted, axes::Tuple) =                                     axes
     return B
 end
 
-# Helper function for combine_axes
-@inline get_dim_ind(dims::Tuple{}, b_dims::Tuple) =  ()
-@inline get_dim_ind(dims::Tuple, b_dims::Tuple) = [findall(x -> x == dims[1], b_dims)[1] , get_dim_ind(Base.tail(dims), b_dims)...]
 
 # -----------------------------------------------------------------------------------------------------------------------------------------
 
@@ -49,9 +55,8 @@ end
 
 # Custom copyto!(): Only needed to maintain Broadcast Style
 @inline function Base.Broadcast.copyto!(dest::Field, bc::Broadcasted{ArrayStyle{Field}})
-    axes(dest) == axes(bc) || throwdm(axes(dest), axes(bc))
     # Performance optimization: broadcast!(identity, dest, A) is equivalent to copyto!(dest, A) if indices match
-    if bc.f === identity && bc.args isa Tuple{AbstractArray} # only a single input argument to broadcast!
+    if axes(dest) == axes(bc) && bc.f === identity && bc.args isa Tuple{AbstractArray} # only a single input argument to broadcast!
         A = bc.args[1]
         if axes(dest) == axes(A)
             return copyto!(dest, A)
@@ -62,7 +67,7 @@ end
 
     # Performance may vary depending on whether `@inbounds` is placed outside the
     # for loop or not. (cf. https://github.com/JuliaLang/julia/issues/38086)
-    @inbounds @simd for I in eachindex(bc′)
+    @inbounds @simd for I in eachindex(dest)
         dest[I] = bc′[I]
     end
     return dest
@@ -72,11 +77,11 @@ end
 # -----------------------------------------------------------------------------------------------------------------------------------------
 
 # Custom preprocess(): Needed inorder to pass output dimensions to extrude
-@inline function Base.Broadcast.preprocess(dest::Field, x::Field)
-    return extrude(Base.Broadcast.broadcast_unalias(dest, x), dest.dims)
+@inline function Base.Broadcast.preprocess(dest::Field, A::Field)
+    return f_extrude(Base.Broadcast.broadcast_unalias(dest, A), dest.dims)
 end
 
-@inline function extrude(A::Field, b_dims::Tuple)
+@inline function f_extrude(A::Field, b_dims::Tuple)
     return Extruded(A, f_newindexer(A.dims, b_dims, axes(A))...)
 end
 
@@ -118,7 +123,10 @@ Base.@propagate_inbounds f_broadcast_getindex(A::Tuple, I) = A[I[1]]
 Base.@propagate_inbounds f_broadcast_getindex(A, I) = A[Base.Broadcast.newindex(A, I)]
 Base.@propagate_inbounds f_broadcast_getindex(b::Extruded, i) = b.x[f_newindex(i, b.keeps, b.defaults)]
 
+
 @inline f_newindex(I::CartesianIndex, keep, Idefault) = CartesianIndex(_f_newindex(I.I, keep, Idefault))
+@inline f_newindex(i::Integer, keep::Tuple, idefault) = ifelse(keep[1], i, idefault[1])
+@inline f_newindex(i::Integer, keep::Tuple{}, idefault) = CartesianIndex(())
 @inline _f_newindex(i::Integer, keep::Tuple, idefault) = ifelse(keep[1], i, idefault[1])
 @inline _f_newindex(i::Integer, keep::Tuple{}, idefault) = CartesianIndex(())
 @inline _f_newindex(I::Tuple{}, keep::Tuple{}, Idefault::Tuple{}) = ()

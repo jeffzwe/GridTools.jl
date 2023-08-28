@@ -1,6 +1,7 @@
 using PyCall
 
-include("GridUser.jl")
+include("GridTools.jl")
+using .GridTools
 
 # import .GridTools: Dimension, Field, Connectivity
 
