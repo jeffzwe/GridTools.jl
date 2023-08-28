@@ -110,13 +110,13 @@ macro field_operator(expr::Expr)
 
     dict = splitdef(expr)
 
-    # push!(dict[:kwargs], :(offset_provider::Dict)) # version with named offset_provider
-    push!(dict[:kwargs], :($(Expr(:kw, :(offset_provider::Dict), :nothing)))) # version with named offset_provider = nothing
+    push!(dict[:kwargs], :(offset_provider::Dict)) # version with named offset_provider
+    # push!(dict[:kwargs], :($(Expr(:kw, :(offset_provider::Dict), :nothing)))) # version with named offset_provider = nothing
     
     new_exp = Expr(:call, unpack_dict, :offset_provider)
-    dict[:body] = [dict[:body].args[1:2]..., new_exp, dict[:body].args[3:end]...]
-
-    return combinedef(dict)
+    dict[:body].args = [dict[:body].args[1:2]..., new_exp, dict[:body].args[3:end]...]
+    
+    combinedef(dict)
 end
 
 # TODO: returns new Field. If to manipulate existing field make field mutable or make broadcast_dim an array
@@ -130,7 +130,7 @@ function broadcast(f::Field, b_dims::D)::Field where D <: Tuple{Vararg{<:Dimensi
 end
 
 function broadcast(n::Number, b_dims::D)::Field where D <: Tuple{Vararg{<:Dimension}}
-    return Field(b_dims[1], fill(n, 1), b_dims)
+    return Field((b_dims[1],), fill(n, 1), b_dims)
 end
 
 """
@@ -153,9 +153,8 @@ function min_over(field_in::Field; axis::Dimension)::Field
     return Field((field_in.dims[1:dim-1]..., field_in.dims[dim+1:end]...), dropdims(minimum(field_in.data, dims=dim), dims=dim)) 
 end
 
-@inbounds where(mask::Field, a::Field, scal::Real)::Field = ifelse.(mask, a, scal)
-@inbounds where(mask::Field, scal::Real, a::Field)::Field = ifelse.(mask, a, scal)
-@inbounds where(mask::Field, a::Field, b::Field)::Field = ifelse.(mask, a, b)
+
+@inbounds where(mask::Field, a::Union{Field, Real}, b::Union{Field, Real})::Field = ifelse.(mask, a, b)
 """
     where(mask::Field, true, false)
 

@@ -14,7 +14,8 @@ end
 
 @field_operator function nabla_z(
     psi::Field{<:AbstractFloat, 2, Tuple{Vertex_, K_}, <:Tuple}, 
-    level_indices::Field{<:Integer, 1, Tuple{K_}, <:Tuple}, num_level::Integer
+    level_indices::Field{<:Integer, 1, Tuple{K_}, <:Tuple}, 
+    num_level::Integer
     )
     return with_boundary_values(
         psi(Koff(2)) - psi(Koff(1)),
@@ -295,9 +296,9 @@ end
     dual_face_normal_weighted_x::Field{<:AbstractFloat, 1, Tuple{Edge_}, <:Tuple},
     dual_face_normal_weighted_y::Field{<:AbstractFloat, 1, Tuple{Edge_}, <:Tuple}
     )::Field{<:AbstractFloat, 2, Tuple{Vertex_, K_}, <:Tuple}
-    vn = advector_normal(vel_x, vel_y, pole_edge_mask, dual_face_normal_weighted_x, dual_face_normal_weighted_y)
+    vn = advector_normal(vel_x, vel_y, pole_edge_mask, dual_face_normal_weighted_x, dual_face_normal_weighted_y, offset_provider = offset_provider)
 
-    flux = upwind_flux(rho, vn)
+    flux = upwind_flux(rho, vn, offset_provider = offset_provider)
     rho = rho .- dt ./ (vol .* gac) .* neighbor_sum(flux(V2E()) .* dual_face_orientation, axis=V2EDim)
     return rho
 end

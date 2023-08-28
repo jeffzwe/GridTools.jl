@@ -248,18 +248,44 @@ end
     mesh_radius::AbstractFloat,
     mesh_xydeg_x:: Field{<:AbstractFloat, 1, Tuple{Vertex_}, <:Tuple},
     mesh_xydeg_y:: Field{<:AbstractFloat, 1, Tuple{Vertex_}, <:Tuple},
-    mesh_vertex_ghost_mask:: Field{Bool, 1, Tuple{Vertex_}, <:Tuple},
+    mesh_vertex_ghost_mask:: Field{Bool, 1, Tuple{Vertex_}, <:Tuple}
     )::Field{<:AbstractFloat, 1, Tuple{Vertex_}, <:Tuple}
 
     lonc = 0.5 * pi
     latc = 0.0
-
     mesh_xyrad_x, mesh_xyrad_y = mesh_xydeg_x .* deg2radd, mesh_xydeg_y .* deg2radd
     rsina, rcosa = sin.(mesh_xyrad_y), cos.(mesh_xyrad_y)
-
+    
     zdist = mesh_radius .* acos.(sin(latc) .* rsina .+ cos(latc) .* rcosa .* cos.(mesh_xyrad_x .- lonc))
+  
     rpr = (zdist ./ (mesh_radius / 2.0)) .^ 2.0
+   
     rpr = min.(1.0, rpr)
+
+    return GridTools.broadcast(where(mesh_vertex_ghost_mask, 0.0, 0.5 .* (1.0 .+ cos.(pi .* rpr))), (Vertex, K))
+end
+
+function initial_rho(
+    mesh_radius::AbstractFloat,
+    mesh_xydeg_x:: Field{<:AbstractFloat, 1, Tuple{Vertex_}, <:Tuple},
+    mesh_xydeg_y:: Field{<:AbstractFloat, 1, Tuple{Vertex_}, <:Tuple},
+    mesh_vertex_ghost_mask:: Field{Bool, 1, Tuple{Vertex_}, <:Tuple};
+    offset_provider::Dict
+    )::Field{<:AbstractFloat, 1, Tuple{Vertex_}, <:Tuple}
+
+    unpack_dict(offset_provider)
+
+    lonc = 0.5 * pi
+    latc = 0.0
+    mesh_xyrad_x, mesh_xyrad_y = mesh_xydeg_x .* deg2radd, mesh_xydeg_y .* deg2radd
+    rsina, rcosa = sin.(mesh_xyrad_y), cos.(mesh_xyrad_y)
+    
+    zdist = mesh_radius .* acos.(sin(latc) .* rsina .+ cos(latc) .* rcosa .* cos.(mesh_xyrad_x .- lonc))
+  
+    rpr = (zdist ./ (mesh_radius / 2.0)) .^ 2.0
+   
+    rpr = min.(1.0, rpr)
+
     return GridTools.broadcast(where(mesh_vertex_ghost_mask, 0.0, 0.5 .* (1.0 .+ cos.(pi .* rpr))), (Vertex, K))
 end
 
