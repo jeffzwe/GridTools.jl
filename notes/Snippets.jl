@@ -21,7 +21,7 @@ end
 
 
 function sum_adjacent_cells(cells::Field, e2c::Connectivity)
-    return neighbor_sum(cells(e2c()), axis=E2C)
+    return neighbor_sum(cells(e2c()), axis=E2CDim)
 end
 
 
@@ -61,7 +61,7 @@ cell_to_edge_table = [
     [6   7  12]
 ]
 
-E2C_offset_provider = Connectivity(edge_to_cell_table, (Cell,), (Edge, E2C), 2)
+E2C_offset_provider = Connectivity(edge_to_cell_table, (Cell,), (Edge, E2CDim), 2)
 
 edge_values = nearest_cell_to_edge(cell_values, E2C_offset_provider)
 println(edge_values)

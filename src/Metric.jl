@@ -1,8 +1,4 @@
 
-include("StateContainer.jl")
-using .GridTools
-
-# TODO: Make this a Module
 
 struct Metric
     g11::Field{<:AbstractFloat, 1, Tuple{Vertex_}, <:Tuple}

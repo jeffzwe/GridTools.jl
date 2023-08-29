@@ -1,7 +1,3 @@
-include("AtlasMesh.jl")
-using .GridTools
-
-# TODO: Make this a Module
 
 struct StateContainer
     rho::Field{<:AbstractFloat, 2, Tuple{Vertex_, K_}, <:Tuple}

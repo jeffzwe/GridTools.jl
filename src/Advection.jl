@@ -1,5 +1,3 @@
-include("Metric.jl")
-using .GridTools
 
 @field_operator function with_boundary_values(
     lowwer::Field{<:AbstractFloat, 2, Tuple{Vertex_, K_}, <:Tuple},
@@ -31,8 +29,8 @@ end
     pole_edge_mask::Field{Bool, 1, Tuple{Edge_}, <:Tuple}
     )::Tuple{Field, Field}
     pole_bc = where(pole_edge_mask, -1.0, 1.0)
-    vel_edges_x = 0.5 * (vel_x(E2V(1)) + pole_bc * vel_x(E2V[1]))
-    vel_edges_y = 0.5 * (vel_y(E2V(1)) + pole_bc * vel_y(E2V[1]))
+    vel_edges_x = 0.5 * (vel_x(E2V(1)) + pole_bc * vel_x(E2V(1)))
+    vel_edges_y = 0.5 * (vel_y(E2V(1)) + pole_bc * vel_y(E2V(1)))
     return vel_edges_x, where(pole_edge_mask, 0.0, vel_edges_y)
 end
 

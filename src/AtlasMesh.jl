@@ -1,8 +1,5 @@
 using PyCall
 
-include("GridTools.jl")
-using .GridTools
-
 # import .GridTools: Dimension, Field, Connectivity
 
 atlas = pyimport("atlas4py")
@@ -24,7 +21,6 @@ from atlas4py import (
     BlockConnectivity,
 )
 """
-
 
 
 const rpi = 2.0 * asin(1.0)
@@ -208,13 +204,13 @@ struct AtlasMesh
         @assert size(c2v_np)[1] == num_cells
         @assert size(c2e_np)[1] == num_cells
 
-        v2e = Connectivity(v2e_np, (Vertex,), (Edge,), size(v2e_np)[1])
-        v2c = Connectivity(v2c_np, (Vertex,), (Cell,), size(v2c_np)[1])
-        v2v = Connectivity(v2v_np, (Vertex,), (Vertex,), size(v2v_np)[1])
-        e2v = Connectivity(e2v_np, (Edge,), (Vertex,), size(e2v_np)[1])
-        e2c = Connectivity(e2c_np, (Edge,), (Cell,), size(e2c_np)[1])
-        c2v = Connectivity(c2v_np, (Cell,), (Vertex,), size(c2v_np)[1])
-        c2e = Connectivity(c2e_np, (Cell,), (Edge,), size(c2e_np)[1])
+        v2e = Connectivity(v2e_np, (Edge,), (Vertex,), size(v2e_np)[2])
+        v2c = Connectivity(v2c_np, (Cell,), (Vertex,), size(v2c_np)[2])
+        v2v = Connectivity(v2v_np, (Vertex,), (Vertex,), size(v2v_np)[2])
+        e2v = Connectivity(e2v_np, (Vertex,), (Edge,), size(e2v_np)[2])
+        e2c = Connectivity(e2c_np, (Cell,), (Edge,), size(e2c_np)[2])
+        c2v = Connectivity(c2v_np, (Vertex,), (Cell,), size(c2v_np)[2])
+        c2e = Connectivity(c2e_np, (Edge,), (Cell,), size(c2e_np)[2])
 
         vertex_remote_indices = mesh.nodes.field("remote_idx")
         edge_remote_indices = mesh.edges.field("remote_idx")

@@ -1,6 +1,4 @@
 # advection test
-
-include("Advection.jl")
 using Printf
 
 grid = atlas.StructuredGrid("O32")

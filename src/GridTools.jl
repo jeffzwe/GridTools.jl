@@ -10,7 +10,7 @@ using MacroTools
 
 import Base.Broadcast: Extruded, Style, BroadcastStyle, ArrayStyle ,Broadcasted
 
-export Cell, K , Edge, E2C, Vertex, V2VDim, V2EDim, E2VDim, Cell_, K_, Edge_, E2C_, Vertex_, V2VDim_, V2EDim_, E2VDim_,
+export Cell, K , Edge, Vertex, V2VDim, V2EDim, E2VDim, E2CDim, Cell_, K_, Edge_, Vertex_, V2VDim_, V2EDim_, E2VDim_, E2CDim_,
 Field, Dimension, Connectivity, neighbor_sum, max_over, min_over, where, broadcast, @field_operator
 
 
@@ -26,6 +26,36 @@ julia> Cell = Cell_()
 ```
 """
 abstract type Dimension end
+
+# Connectivity struct ------------------------------------------------------------
+"""
+    Connectivity(data::Array, source::Tuple, target::Tuple, dims::Int)
+
+# Examples
+```julia-repl
+julia> new_connectivity = Connectivity(fill(1, (3,2)), Cell, (Edge, E2C), 2)
+3x2  Field with dims (Main.GridTools.Cell_(), Main.GridTools.K_()) and broadcasted_dims (Main.GridTools.Cell_(), Main.GridTools.K_()):
+ 1  1
+ 1  1
+ 1  1
+```
+"""
+struct Connectivity
+    data::Array{Integer}
+    source::Tuple{Vararg{<:Dimension}}
+    target::Tuple{Vararg{<:Dimension}}
+    dims::Integer
+end
+
+# TODO: Sure that this does the right thing? Add to documentation of Connectivity
+function (conn_call::Connectivity)(neighbor::Integer = -1)::Connectivity
+    if neighbor == -1
+        return conn_call
+    else
+        @assert conn_call.dims >= neighbor
+        return Connectivity(conn_call.data[:, neighbor], conn_call.source, (conn_call.target[1],), 1)
+    end
+end
 
 # Field struct --------------------------------------------------------------------
 
@@ -60,42 +90,22 @@ Base.size(F::Field)::Tuple = size(F.data)
 Base.showarg(io::IO, F::Field, toplevel) = print(io, " Field with dims ", F.dims, " and broadcasted_dims ", F.broadcast_dims)
 
 # TODO: Sure that this does the right thing? Add to documentation of Field
-function (field_call::Field)(field_in::Field)::Field
-    @assert maximum(field_in) <= length(field_call) && minimum(field_in) >= 0
-    return Field(field_in.dims, map(x -> x == 0 ? 0 : getindex(field_call.data, Int.(x)), field_in.data))
-end
+function (field_call::Field)(conn_in::Connectivity)::Field
+    
+    @assert maximum(conn_in.data) <= size(field_call)[1] && minimum(conn_in.data) >= 0
 
-
-# Connectivity struct ------------------------------------------------------------
-"""
-    Connectivity(data::Array, source::Tuple, target::Tuple, dims::Int)
-
-# Examples
-```julia-repl
-julia> new_connectivity = Connectivity(fill(1, (3,2)), Cell, (Edge, E2C), 2)
-3x2  Field with dims (Main.GridTools.Cell_(), Main.GridTools.K_()) and broadcasted_dims (Main.GridTools.Cell_(), Main.GridTools.K_()):
- 1  1
- 1  1
- 1  1
-```
-"""
-struct Connectivity
-    data::Array{Integer, 2}
-    source::Tuple{Vararg{<:Dimension}}
-    target::Tuple{Vararg{<:Dimension}}
-    dims::Integer
-end
-
-# TODO: Sure that this does the right thing? Add to documentation of Connectivity
-function (conn_call::Connectivity)(neighbor::Integer = -1)::Field
-    if neighbor == -1
-        return Field(conn_call.target, conn_call.data)
+    if ndims(field_call) == 1
+        res = map(x -> x == 0 ? 0 : getindex(field_call, Int.(x)), conn_in.data)
     else
-        @assert conn_call.dims >= neighbor
-        return Field((conn_call.target[neighbor],), conn_call.data[:, neighbor])
+        f(slice) = map(x -> x == 0 ? 0 : getindex(slice, Int.(x)), conn_in.data)
+        res = cat(map(f, eachslice(field_call.data, dims=2))...,dims=ndims(conn_in.data)+1)
     end
-end
 
+    dims = deleteat!([field_call.dims...], findall(x->x in conn_in.source, [field_call.dims...]))
+    dims = tuple(conn_in.target..., dims...)
+
+    return Field(dims, res)
+end
 
 # Built-ins ----------------------------------------------------------------------
 
@@ -192,25 +202,24 @@ where(mask::Field, t1::Tuple, t2::Tuple)::Field = map(x -> where(mask, x[1], x[2
 
 include("CustBroadcast.jl")
 
-
 # Actually user defined but yeah... macros...
 
 struct Cell_ <: Dimension end
 struct K_ <: Dimension end
 struct Edge_ <: Dimension end
-struct E2C_ <: Dimension end
 struct Vertex_ <: Dimension end
 struct V2VDim_ <: Dimension end
 struct V2EDim_ <: Dimension end
 struct E2VDim_ <: Dimension end
+struct E2CDim_ <: Dimension end
 Cell = Cell_()
 K = K_()
 Edge = Edge_()
-E2C = E2C_()
 Vertex = Vertex_()
 V2VDim = V2VDim_()
 V2EDim = V2EDim_()
 E2VDim = E2VDim_()
+E2CDim = E2CDim_()
 
 end
 

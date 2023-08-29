@@ -2,9 +2,13 @@
 include("GridTools.jl")
 using .GridTools
 
+include("AtlasMesh.jl")
+include("Advection.jl")
+include("StateContainer.jl")
+include("Metric.jl")
+include("AdvectionTest.jl")
 
-
-# @field_operator function hello(x::Integer, y::Integer)
+# @field_operator function test(x::Integer, y::Integer)
 
 #     a = V2V
 #     b = E2V
@@ -18,20 +22,23 @@ using .GridTools
 #                    "Koff" => 1  # TODO(tehrengruber): using K here gives a terrible compilation error. Improve in GT4Py!
 #                 )
 
-# GridTools.hello(1, 2, offset_provider = offset_provider)
+# GridTools.test(1, 2, offset_provider = offset_provider)
 
 
 
-
-# Use this as soon as FieldOffset is implemented
-# V2V = 
-# E2V = 
-# V2E = 
-# K = 
-# Koff = 
-
-# V2V = FieldOffset("V2V", source=Vertex, target=(Vertex, V2VDim))
-# E2V = FieldOffset("E2V", source=Vertex, target=(Edge, E2VDim))
-# V2E = FieldOffset("V2E", source=Edge, target=(Vertex, V2EDim))
-# Koff = FieldOffset("Koff", source=K, target=(K,))
-
+# struct Cell_ <: Dimension end
+# struct K_ <: Dimension end
+# struct Edge_ <: Dimension end
+# struct E2C_ <: Dimension end
+# struct Vertex_ <: Dimension end
+# struct V2VDim_ <: Dimension end
+# struct V2EDim_ <: Dimension end
+# struct E2VDim_ <: Dimension end
+# Cell = Cell_()
+# K = K_()
+# Edge = Edge_()
+# E2C = E2C_()
+# Vertex = Vertex_()
+# V2VDim = V2VDim_()
+# V2EDim = V2EDim_()
+# E2VDim = E2VDim_()
