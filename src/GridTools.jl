@@ -1,3 +1,5 @@
+# Global OFFSET_PROVIDER version....
+
 module GridTools
 
 using Printf
@@ -10,8 +12,7 @@ using MacroTools
 
 import Base.Broadcast: Extruded, Style, BroadcastStyle, ArrayStyle ,Broadcasted
 
-export Cell, K , Edge, Vertex, V2VDim, V2EDim, E2VDim, E2CDim, Cell_, K_, Edge_, Vertex_, V2VDim_, V2EDim_, E2VDim_, E2CDim_,
-Field, Dimension, Connectivity, neighbor_sum, max_over, min_over, where, broadcast, @field_operator
+export Field, Dimension, Connectivity, FieldOffset, neighbor_sum, max_over, min_over, where, broadcast, @field_operator
 
 
 # Lib ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -27,6 +28,7 @@ julia> Cell = Cell_()
 """
 abstract type Dimension end
 
+
 # Connectivity struct ------------------------------------------------------------
 """
     Connectivity(data::Array, source::Tuple, target::Tuple, dims::Int)
@@ -41,26 +43,41 @@ julia> new_connectivity = Connectivity(fill(1, (3,2)), Cell, (Edge, E2C), 2)
 ```
 """
 struct Connectivity
-    data::Array{Integer}
+    data::Array{Integer, 2}
     source::Tuple{Vararg{<:Dimension}}
     target::Tuple{Vararg{<:Dimension}}
     dims::Integer
 end
 
-# TODO: Sure that this does the right thing? Add to documentation of Connectivity
-function (conn_call::Connectivity)(neighbor::Integer = -1)::Connectivity
-    if neighbor == -1
-        return conn_call
-    else
-        @assert conn_call.dims >= neighbor
-        return Connectivity(conn_call.data[:, neighbor], conn_call.source, (conn_call.target[1],), 1)
+# FieldOffset struct -------------------------------------------------------------
+
+struct FieldOffset
+    name::String
+    source::Tuple{Vararg{<:Dimension}}
+    target::Tuple{Vararg{<:Dimension}}
+
+    function FieldOffset(name::String; source::Tuple{Vararg{<:Dimension}}, target::Tuple{Vararg{<:Dimension}})::FieldOffset
+        new(name, source, target)
     end
+end
+
+function (f_off::FieldOffset)(ind::Integer)::Tuple{Array{Integer,1}, Tuple{Vararg{<:Dimension}}, Tuple{Vararg{<:Dimension}}}
+    conn = OFFSET_PROVIDER[f_off.name]
+    @assert all(x -> x in f_off.source, conn.source) && all(x -> x in f_off.target, conn.target)
+    return (conn.data[:,ind], f_off.source, (f_off.target[1],))
+end
+
+function (f_off::FieldOffset)()::Tuple{Array{Integer,2}, Tuple{Vararg{<:Dimension}}, Tuple{Vararg{<:Dimension}}}
+    conn = OFFSET_PROVIDER[f_off.name]
+    @assert all(x -> x in f_off.source, conn.source) && all(x -> x in f_off.target, conn.target)
+    return (conn.data, f_off.source, f_off.target)
 end
 
 # Field struct --------------------------------------------------------------------
 
 # TODO: check for #dimension at compile time and not runtime
 # TODO: <: AbstractArray{T,N} is not needed... but then we have to define our own length and iterate function for Fields
+# TODO: What type should dims and broadcast_dims have?
 """
     Field(dims::Tuple, data::Array, broadcast_dims::Tuple)
 
@@ -90,46 +107,48 @@ Base.size(F::Field)::Tuple = size(F.data)
 Base.showarg(io::IO, F::Field, toplevel) = print(io, " Field with dims ", F.dims, " and broadcasted_dims ", F.broadcast_dims)
 
 # TODO: Sure that this does the right thing? Add to documentation of Field
-function (field_call::Field)(conn_in::Connectivity)::Field
+function (field_call::Field)(conn_in::Tuple{Array{Integer}, Tuple{Vararg{<:Dimension}}, Tuple{Vararg{<:Dimension}}})::Field
+
+    conn_data = conn_in[1]
+    conn_source = conn_in[2]
+    conn_target = conn_in[3]
     
-    @assert maximum(conn_in.data) <= size(field_call)[1] && minimum(conn_in.data) >= 0
+    @assert maximum(conn_data) <= size(field_call)[1] && minimum(conn_data) >= 0
 
     if ndims(field_call) == 1
-        res = map(x -> x == 0 ? 0 : getindex(field_call, Int.(x)), conn_in.data)
+        res = map(x -> x == 0. ? 0. : getindex(field_call, Int.(x)), conn_data)
     else
-        f(slice) = map(x -> x == 0 ? 0 : getindex(slice, Int.(x)), conn_in.data)
-        res = cat(map(f, eachslice(field_call.data, dims=2))...,dims=ndims(conn_in.data)+1)
+        f(slice) = map(x -> x == 0. ? 0. : getindex(slice, Int.(x)), conn_data)
+        res = cat(map(f, eachslice(field_call.data, dims=2))...,dims=ndims(conn_data)+1)
     end
 
-    dims = deleteat!([field_call.dims...], findall(x->x in conn_in.source, [field_call.dims...]))
-    dims = tuple(conn_in.target..., dims...)
+    dims = deleteat!([field_call.dims...], findall(x->x in conn_source, [field_call.dims...]))
+    dims = tuple(conn_target..., dims...)
 
     return Field(dims, res)
 end
 
-# Built-ins ----------------------------------------------------------------------
+# Macros ----------------------------------------------------------------------
 
 macro field_operator(expr::Expr)
 
-    unpack_dict(dict::Nothing) = nothing
-    function unpack_dict(dict::Dict)
-        for key in keys(dict)
-            @eval $(Symbol(key)) = $dict[$key]
-        end
+    function assign_dict(dict::Dict)
+    end
+    function assign_dict(dict::Dict{String, Connectivity})
+        global OFFSET_PROVIDER = dict
     end
 
     dict = splitdef(expr)
-
-    push!(dict[:kwargs], :(offset_provider::Dict)) # version with named offset_provider
-    # push!(dict[:kwargs], :($(Expr(:kw, :(offset_provider::Dict), :nothing)))) # version with named offset_provider = nothing
     
-    new_exp = Expr(:call, unpack_dict, :offset_provider)
+    push!(dict[:kwargs], :($(Expr(:kw, :(offset_provider::Dict), :(Dict()))))) # version with named offset_provider = nothing
+    new_exp = Expr(:call, assign_dict, :offset_provider)
     dict[:body].args = [dict[:body].args[1:2]..., new_exp, dict[:body].args[3:end]...]
     
-    combinedef(dict)
+    return esc(combinedef(dict))
 end
 
-# TODO: returns new Field. If to manipulate existing field make field mutable or make broadcast_dim an array
+# Built-ins ----------------------------------------------------------------------
+
 """
     broadcast(f::Field, b_dims::Tuple)
 
@@ -165,6 +184,7 @@ end
 
 
 @inbounds where(mask::Field, a::Union{Field, Real}, b::Union{Field, Real})::Field = ifelse.(mask, a, b)
+
 """
     where(mask::Field, true, false)
 
@@ -198,28 +218,16 @@ where(mask::Field, t1::Tuple, t2::Tuple)::Field = map(x -> where(mask, x[1], x[2
 
 
 
-# Includes ------------------------------------------------------------------------------------------------------------------------------------
+# Includes ------------------------------------------------------------------------------------
 
 include("CustBroadcast.jl")
 
-# Actually user defined but yeah... macros...
+# Constants  -----------------------------------------------------------------------------------
+OFFSET_PROVIDER = Dict{String, Connectivity}()
 
-struct Cell_ <: Dimension end
-struct K_ <: Dimension end
-struct Edge_ <: Dimension end
-struct Vertex_ <: Dimension end
-struct V2VDim_ <: Dimension end
-struct V2EDim_ <: Dimension end
-struct E2VDim_ <: Dimension end
-struct E2CDim_ <: Dimension end
-Cell = Cell_()
-K = K_()
-Edge = Edge_()
-Vertex = Vertex_()
-V2VDim = V2VDim_()
-V2EDim = V2EDim_()
-E2VDim = E2VDim_()
-E2CDim = E2CDim_()
+# function assign_dict(dict::Dict{String, Connectivity})
+#     global OFFSET_PROVIDER = dict
+# end
 
 end
 

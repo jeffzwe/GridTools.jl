@@ -145,7 +145,7 @@ struct AtlasMesh
 
     dual_face_orientation_np::Array
 
-    offset_provider::Dict{String, Union{Connectivity, Dimension}}
+    offset_provider::Dict{String, Union{Connectivity}}
 
     grid_description::String  # string representation of the atlas grid instance
 
@@ -282,11 +282,11 @@ struct AtlasMesh
         vol = Field((Vertex,), vol_np)
 
         # offset_provider
-        offset_provider = Dict{String, Union{Connectivity, Dimension}}(
+        offset_provider = Dict{String, Union{Connectivity}}(
             "V2V" => v2v,
             "V2E" => v2e,
-            "E2V" => e2v,
-            "Koff" => K  # TODO(tehrengruber): using K here gives a terrible compilation error. Improve in GT4Py!
+            "E2V" => e2v
+            # "Koff" => K  # TODO(tehrengruber): using K here gives a terrible compilation error. Improve in GT4Py!
         )
 
         remote_indices = Dict{Dimension, Array}(

@@ -41,6 +41,9 @@ end
     dual_face_normal_weighted_x::Field{<:AbstractFloat, 1, Tuple{Edge_}, <:Tuple},
     dual_face_normal_weighted_y::Field{<:AbstractFloat, 1, Tuple{Edge_}, <:Tuple}
     )::Field{<:AbstractFloat, 2, Tuple{Edge_, K_}, <:Tuple}
+    pole_edge_mask = GridTools.broadcast(pole_edge_mask, (Edge, K))
+    dual_face_normal_weighted_x = GridTools.broadcast(dual_face_normal_weighted_x, (Edge, K))
+    dual_face_normal_weighted_y = GridTools.broadcast(dual_face_normal_weighted_y, (Edge, K))
     pole_bc = where(pole_edge_mask, -1.0, 1.0)
     vel_edges_x = 0.5 .* (vel_x(E2V(1)) .+ pole_bc .* vel_x(E2V(2)))
     vel_edges_y = 0.5 .* (vel_y(E2V(1)) .+ pole_bc .* vel_y(E2V(2)))
@@ -66,7 +69,7 @@ end
     rho::Field{<:AbstractFloat, 2, Tuple{Vertex_, K_}, <:Tuple},
     veln::Field{<:AbstractFloat, 2, Tuple{Edge_, K_}, <:Tuple}
     )::Field{<:AbstractFloat, 2, Tuple{Edge_, K_}, <:Tuple}
-    return where(veln .> 0.0, rho(E2V(1)) .* veln, rho(E2V(2)) .* veln)
+    return where(veln .> 0.0, rho(E2V(1)) .* veln, (rho(E2V(2)) .* veln))
 end
 
 @field_operator function centered_flux(
@@ -294,9 +297,11 @@ end
     dual_face_normal_weighted_x::Field{<:AbstractFloat, 1, Tuple{Edge_}, <:Tuple},
     dual_face_normal_weighted_y::Field{<:AbstractFloat, 1, Tuple{Edge_}, <:Tuple}
     )::Field{<:AbstractFloat, 2, Tuple{Vertex_, K_}, <:Tuple}
-    vn = advector_normal(vel_x, vel_y, pole_edge_mask, dual_face_normal_weighted_x, dual_face_normal_weighted_y, offset_provider = offset_provider)
-
-    flux = upwind_flux(rho, vn, offset_provider = offset_provider)
+    vn = advector_normal(vel_x, vel_y, pole_edge_mask, dual_face_normal_weighted_x, dual_face_normal_weighted_y)
+    flux = upwind_flux(rho, vn)
+    gac = GridTools.broadcast(gac, (Vertex, K))
+    vol = GridTools.broadcast(vol, (Vertex, K))
+    dual_face_orientation = GridTools.broadcast(dual_face_orientation, (Vertex, V2EDim, K))
     rho = rho .- dt ./ (vol .* gac) .* neighbor_sum(flux(V2E()) .* dual_face_orientation, axis=V2EDim)
     return rho
 end

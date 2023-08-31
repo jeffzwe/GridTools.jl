@@ -57,7 +57,7 @@ end
     return GridTools.broadcast(where(mesh_vertex_ghost_mask, 0.0, 0.5 .* (1.0 .+ cos.(pi .* rpr))), (Vertex, K))
 end
 
-state.rho .= GridTools.initial_rho(
+state.rho .= initial_rho(
     mesh.radius,
     mesh.xydeg_x,
     mesh.xydeg_y,
@@ -89,7 +89,7 @@ state.rho .= GridTools.initial_rho(
     return vel_x, vel_y, vel_z
 end
 
-out = GridTools.initial_velocity(
+out = initial_velocity(
     mesh.xydeg_x,
     mesh.xydeg_y,
     metric.gac,
@@ -105,9 +105,9 @@ state.vel[3] .= out[3]
 # state_next.vel = state.vel   #TODO: immutable object!
 
 tmp_fields["tmp_vertex_1"] .= transpose(collect(0.:mesh.num_level-1))
-tmp_fields["tmp_vertex_2"] .= GridTools.nabla_z(tmp_fields["tmp_vertex_1"], level_indices, mesh.num_level, offset_provider = mesh.offset_provider)
+# tmp_fields["tmp_vertex_2"] .= nabla_z(tmp_fields["tmp_vertex_1"], level_indices, mesh.num_level, offset_provider = mesh.offset_provider)
 
-state_next.rho .= GridTools.upwind_scheme(
+state_next.rho .= upwind_scheme(
     state.rho,
     δt,
     mesh.vol,
