@@ -7,7 +7,11 @@ end
 
 # Custom instantiate(): Dimension check and calculation of output dimension
 function Base.Broadcast.instantiate(bc::Broadcasted{ArrayStyle{Field}})
-    return Broadcasted{ArrayStyle{Field}}(bc.f, bc.args, combine_axes(bc)[2])
+    dims_list = Vector{Tuple{Tuple{Vararg{<:Dimension}}, Tuple{Vararg{<:Integer}}}}()
+    axes(bc)
+    out_dims = promote_dims([t[1] for t in dims_list])
+    out_size = map(Base.OneTo(combine_axes(dims_list)))
+    return Broadcasted{ArrayStyle{Field}}(bc.f, bc.args, )
 end
 
 # -----------------------------------------------------------------------------------------------------------------------------------------
@@ -15,30 +19,81 @@ end
 # Checks dimension and broadcast combatibility of all fields
 @inline Base.axes(bc::Broadcasted{ArrayStyle{Field}}) =                 _axes(bc, bc.axes)
 _axes(::Broadcasted, axes::Tuple) =                                     axes
-@inline _axes(bc::Broadcasted, ::Nothing)  =                            combine_axes(bc.args...)
+@inline _axes(bc::Broadcasted, ::Nothing)  =                            map(format, bc.args)
 
 # Helper function for combine_axes
-@inline get_dim_ind(dims::Tuple{}, b_dims::Tuple) =  ()
-@inline get_dim_ind(dims::Tuple, b_dims::Tuple) = [findall(x -> x == dims[1], b_dims)[1] , get_dim_ind(Base.tail(dims), b_dims)...]
-# Helper function for combine_axes
-@inline format(A::Field) = (A.dims, axes(A), A.broadcast_dims)
+@inline format(A::Field) = push!(dims_list, (A.dims, size(A)))
 @inline format(bc::Broadcasted{ArrayStyle{Field}}) = axes(bc)
-@inline format(x::Number) = nothing
-@inline format(t::Tuple) = t
+@inline format(any) = nothing
 
-@inline combine_axes(i1, i2, rest...) = combine_axes(combine_axes(format(i1), format(i2)), rest...)
-@inline combine_axes(i, n::Nothing) = combine_axes(format(i))
-@inline combine_axes(n::Nothing, i) = combine_axes(format(i))
-@inline combine_axes(i) = format(i)
-@inline function combine_axes(A::Tuple, B::Tuple)
-    length(A[1]) > length(B[1]) ? (A,B) = (B,A) : nothing  # swap A and B       
-    # A,B are of the form (dims, axes(data), broadcast_dims)
-    @assert issubset(A[1], B[1]) "Dimension Mismatch between the Dimensions of the two Fields"
-    @assert issubset(B[1], A[3]) "Dimension Mismatch between the broadcasted Dimensions of the two Fields"
-    matching_dims = get_dim_ind(A[1], B[1])
-    @assert A[2] == B[2][matching_dims] "Dimension Mismatch between the data Dimensions of the two Fields"
-    return B
+@inline function promote_dims(dims_list::Vector{Tuple{Vararg{<:Dimension}}})
+
+    graph = Dict{Dimension, Set{Dimension}}()
+    for dims in dims_list
+        if length(dims) == 0
+            continue
+        end
+
+        for dim in dims
+            if !haskey(graph, dim)
+                graph[dim] = Set{Dimension}()
+            end
+        end
+        predecessor = dims[1]
+        for dim in Base.tail(dims)
+            push!(graph[dim], predecessor)
+            predecessor = dim
+        end
+    end
+
+    topological_sort = Vector{Dimension}()
+
+    in_degree = Dict{Dimension, Integer}
+    for key in keys(graph)
+        in_degree[key] = length(graph[key])
+    end
+
+    zero_in_degree_vertex_list = [key for (key, value) in in_degree if value == 0]
+    while !isempty(zero_in_degree_vertex_list)
+        if length(zero_in_degree_vertex_list) != 1
+            error_message = "Dimensions cannot be promoted. Could not determine order of the following dimensions: "
+            error_message *= join((dim for dim in zero_in_degree_vertex_list), ", ")
+            throw(ArgumentError(error_message))
+        end
+
+        v = zero_in_degree_vertex_list[1]
+        delete!(in_degree, v)
+        push!(topological_sort, v)
+
+        for pred in graph[v]
+            in_degree[pred] -= 1
+        end
+    end
+
+    if length(keys(in_degree)) > 0
+        error_message = "Dimensions cannot be promoted. The following dimensions appear in contradicting order: "
+        error_message *= join(keys(in_degree), ", ")
+        throw(ArgumentError(error_message))
+    end
+
+
 end
+
+@inline function combine_axes(dims_list::Vector{Tuple{Tuple{Vararg{<:Dimension}}, Tuple{Vararg{<:Integer}}}})
+    ref = zeros(Integer, length(out_dims))
+    for dims in dims_list
+        for (i,ind) in enumerate(indexin(dims[1], out_dims))
+            if ref[ind] == 0
+                ref[ind] = dims[2][i]
+            else
+                @assert ref[ind] == dims[2][i] "Dimension Mismatch between the data Dimensions of two Fields"
+            end
+        end
+    end
+    return Tuple(ref)
+end
+
+
 
 
 # -----------------------------------------------------------------------------------------------------------------------------------------

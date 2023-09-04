@@ -271,3 +271,52 @@ macro field_operator(expr::Expr)
     
     combinedef(dict)
 end
+
+
+
+# Snippets from explicit combine axes
+
+# Custom instantiate(): Dimension check and calculation of output dimension
+function Base.Broadcast.instantiate(bc::Broadcasted{ArrayStyle{Field}})
+    return Broadcasted{ArrayStyle{Field}}(bc.f, bc.args, combine_axes(bc)[2])
+end
+
+# -----------------------------------------------------------------------------------------------------------------------------------------
+
+# Checks dimension and broadcast combatibility of all fields
+@inline Base.axes(bc::Broadcasted{ArrayStyle{Field}}) =                 _axes(bc, bc.axes)
+_axes(::Broadcasted, axes::Tuple) =                                     axes
+@inline _axes(bc::Broadcasted, ::Nothing)  =                            combine_axes(bc.args...)
+
+# Helper function for combine_axes
+@inline get_dim_ind(dims::Tuple{}, b_dims::Tuple) =  ()
+@inline get_dim_ind(dims::Tuple, b_dims::Tuple) = [findall(x -> x == dims[1], b_dims)[1] , get_dim_ind(Base.tail(dims), b_dims)...]
+# Helper function for combine_axes
+@inline format(A::Field) = (A.dims, axes(A), A.broadcast_dims)
+@inline format(bc::Broadcasted{ArrayStyle{Field}}) = axes(bc)
+@inline format(x::Number) = nothing
+@inline format(t::Tuple) = t
+
+@inline combine_axes(i1, i2, rest...) = combine_axes(combine_axes(format(i1), format(i2)), rest...)
+@inline combine_axes(i, n::Nothing) = combine_axes(format(i))
+@inline combine_axes(n::Nothing, i) = combine_axes(format(i))
+@inline combine_axes(i) = format(i)
+@inline function combine_axes(A::Tuple, B::Tuple)
+    length(A[1]) > length(B[1]) ? (A,B) = (B,A) : nothing  # swap A and B       
+    # A,B are of the form (dims, axes(data), broadcast_dims)
+    @assert issubset(A[1], B[1]) "Dimension Mismatch between the Dimensions of the two Fields"
+    @assert issubset(B[1], A[3]) "Dimension Mismatch between the broadcasted Dimensions of the two Fields"
+    matching_dims = get_dim_ind(A[1], B[1])
+    @assert A[2] == B[2][matching_dims] "Dimension Mismatch between the data Dimensions of the two Fields"
+    return B
+end
+
+
+# -----------------------------------------------------------------------------------------------------------------------------------------
+
+# Custom similar(): Creates output object
+function Base.similar(bc::Broadcasted{ArrayStyle{Field}}, ::Type{ElType}) where ElType
+    output_props = combine_axes(bc.args...)
+    
+    Field(output_props[1], similar(Array{ElType}, output_props[2]), output_props[3])
+end
