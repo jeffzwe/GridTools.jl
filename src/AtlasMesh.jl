@@ -26,14 +26,16 @@ from atlas4py import (
 const rpi = 2.0 * asin(1.0)
 const _deg2rad = 2.0 * rpi / 360.0
 
-DIMENSION_TO_SIZE_ATTR = Dict{Dimension, String}(
+const DIMENSION_TO_SIZE_ATTR = Dict{Dimension, String}(
         Vertex => "num_vertices",
         Edge => "num_edges",
         Cell => "num_cells",
         K => "num_level"
 )
 
-function _atlas_connectivity_to_array(atlas_conn; out = nothing, skip_neighbor_indicator = -1)
+const SKIP_NEIGHBOR_INDICATOR = -1
+
+function _atlas_connectivity_to_array(atlas_conn; out = nothing)
     if py"isinstance"(atlas_conn, atlas.BlockConnectivity)
         shape = (atlas_conn.rows, atlas_conn.cols)
         out === nothing ? out = zeros(Integer,shape) : out
@@ -57,7 +59,7 @@ function _atlas_connectivity_to_array(atlas_conn; out = nothing, skip_neighbor_i
         for nb in 1:cols
             out[i, nb] = atlas_conn[i, nb]
         end
-        out[i, (cols+1):end] .= skip_neighbor_indicator
+        out[i, (cols+1):end] .= SKIP_NEIGHBOR_INDICATOR
     end
 
     return out
@@ -253,7 +255,7 @@ struct AtlasMesh
         for v in 1:num_vertices
             for e_nb in 1:edges_per_node
                 e = v2e_np[v, e_nb]
-                if e != 0
+                if e != SKIP_NEIGHBOR_INDICATOR
                     if v == e2v_np[e, 1]
                         dual_face_orientation_np[v, e_nb] = 1.0
                         v2v_np[v, e_nb] = e2v_np[e,2]

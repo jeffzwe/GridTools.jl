@@ -1,5 +1,3 @@
-# Global OFFSET_PROVIDER version....
-
 module GridTools
 
 using Printf
@@ -12,13 +10,15 @@ using MacroTools
 
 import Base.Broadcast: Extruded, Style, BroadcastStyle, ArrayStyle ,Broadcasted
 
-export Field, Dimension, Connectivity, FieldOffset, neighbor_sum, max_over, min_over, where, broadcast, @field_operator
+export Field, Dimension, Connectivity, FieldOffset, neighbor_sum, max_over, min_over, where, @field_operator #, broadcast
 
 
 # Lib ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 """
     abstract type Dimension
+
+Create a new Dimension.
 
 # Examples
 ```julia-repl
@@ -29,7 +29,83 @@ julia> Cell = Cell_()
 abstract type Dimension end
 
 
+# Field struct --------------------------------------------------------------------
+
+# TODO: check for #dimension at compile time and not runtime
+# TODO: <: AbstractArray{T,N} is not needed... but then we have to define our own length and iterate function for Fields
+# TODO: What type should dims and broadcast_dims have?
+"""
+    Field(dims::Tuple, data::Array, broadcast_dims::Tuple)
+
+Fields store data as a multi-dimensional array, and are defined over a set of named dimensions. 
+
+# Examples
+```julia-repl
+julia> new_field = Field((Cell, K), fill(1.0, (3,2)))
+3x2  Field with dims (Main.GridTools.Cell_(), Main.GridTools.K_()) and broadcasted_dims (Main.GridTools.Cell_(), Main.GridTools.K_()):
+ 1.0  1.0
+ 1.0  1.0
+ 1.0  1.0
+```
+
+Fields also have a call operator. You can transform fields (or tuples of fields) over one domain to another domain by using the call operator of the source field with a field offset as argument.
+As an example, you can use the field offset E2C below to transform a field over cells to a field over edges using edge-to-cell connectivities. The FieldOffset can take an index as argument which restricts the output dimension of the transform.
+
+The call itself must happen in a field_operator since it needs the functionality of an offset_provider.
+
+
+# Examples
+```julia-repl
+julia> E2C = gtx.FieldOffset("E2C", source=CellDim, target=(EdgeDim,E2CDim))
+julia> field = Field((Cell,), ones(5))
+
+...
+julia> field(E2C())
+julia> field(E2C(1))
+...
+```
+"""
+struct Field{T, N, T2 <: Tuple{Vararg{<:Dimension}}, T3 <: Tuple{Vararg{<:Dimension}}} <: AbstractArray{T,N}
+    dims::T2
+    data::Array{T,N}
+    broadcast_dims::T3
+    
+    function Field(dims::T2, data::Array{T,N}, broadcast_dims::T3 = dims) where {T, N, T2 <: Tuple{Vararg{<:Dimension}}, T3 <: Tuple{Vararg{<:Dimension}}}
+        @assert length(dims) == ndims(data)
+        return new{T,N,T2,T3}(dims, data, broadcast_dims)
+    end
+end
+
+Base.size(F::Field)::Tuple = size(F.data)
+@propagate_inbounds Base.getindex(F::Field{T,N}, inds::Vararg{Int,N}) where {T,N} = F.data[inds...]
+@propagate_inbounds Base.setindex!(F::Field{T,N}, val, inds::Vararg{Int,N}) where {T,N} = F.data[inds...] = val
+Base.showarg(io::IO, F::Field, toplevel) = print(io, " Field with dims ", F.dims)
+
+# TODO: Add to documentation of Field
+function (field_call::Field)(conn_in::Tuple{Array{Integer}, Tuple{Vararg{<:Dimension}}, Tuple{Vararg{<:Dimension}}})::Field
+
+    conn_data = conn_in[1]
+    conn_source = conn_in[2]
+    conn_target = conn_in[3]
+    
+    @assert maximum(conn_data) <= size(field_call)[1] && minimum(conn_data) >= 0
+
+    if ndims(field_call) == 1
+        res = map(x -> x == 0. ? 0. : getindex(field_call, Int.(x)), conn_data)
+    else
+        f(slice) = map(x -> x == 0. ? 0. : getindex(slice, Int.(x)), conn_data)
+        res = cat(map(f, eachslice(field_call.data, dims=2))...,dims=ndims(conn_data)+1)
+    end
+
+    dims = deleteat!([field_call.dims...], findall(x->x in conn_source, [field_call.dims...]))
+    dims = tuple(conn_target..., dims...)
+
+    return Field(dims, res)
+end
+
+
 # Connectivity struct ------------------------------------------------------------
+
 """
     Connectivity(data::Array, source::Tuple, target::Tuple, dims::Int)
 
@@ -51,6 +127,17 @@ end
 
 # FieldOffset struct -------------------------------------------------------------
 
+"""
+    FieldOffset(name::String, source::Tuple, target::Tuple)
+
+You can transform fields (or tuples of fields) over one domain to another domain by using the call operator of the source field with a field offset as argument. This transform uses the connectivity between the source and target domains to find the values of adjacent mesh elements.
+
+# Examples
+```julia-repl
+julia> vertex2edge = FieldOffset("V2E", source=(Edge,), target=(Vertex, V2EDim))
+FieldOffset("V2E", (Edge_(),), (Vertex_(), V2EDim_()))
+```
+"""
 struct FieldOffset
     name::String
     source::Tuple{Vararg{<:Dimension}}
@@ -73,78 +160,46 @@ function (f_off::FieldOffset)()::Tuple{Array{Integer,2}, Tuple{Vararg{<:Dimensio
     return (conn.data, f_off.source, f_off.target)
 end
 
-# Field struct --------------------------------------------------------------------
 
-# TODO: check for #dimension at compile time and not runtime
-# TODO: <: AbstractArray{T,N} is not needed... but then we have to define our own length and iterate function for Fields
-# TODO: What type should dims and broadcast_dims have?
+# Macros ----------------------------------------------------------------------
 """
-    Field(dims::Tuple, data::Array, broadcast_dims::Tuple)
+    @field_operator
+
+The field_operator macro takes a function definition and creates a run environment for the function call within the GridTools package. It enables the additional argument "offset_provider" etc.
 
 # Examples
 ```julia-repl
-julia> new_field = Field((Cell, K), fill(1.0, (3,2)))
-3x2  Field with dims (Main.GridTools.Cell_(), Main.GridTools.K_()) and broadcasted_dims (Main.GridTools.Cell_(), Main.GridTools.K_()):
- 1.0  1.0
- 1.0  1.0
- 1.0  1.0
+julia> @field_operator hello(x) = x + x
+hello (generic function with 1 method)
+...
 ```
 """
-struct Field{T, N, T2 <: Tuple{Vararg{<:Dimension}}, T3 <: Tuple{Vararg{<:Dimension}}} <: AbstractArray{T,N}
-    dims::T2
-    data::Array{T,N}
-    broadcast_dims::T3
-    
-    function Field(dims::T2, data::Array{T,N}, broadcast_dims::T3 = dims) where {T, N, T2 <: Tuple{Vararg{<:Dimension}}, T3 <: Tuple{Vararg{<:Dimension}}}
-        @assert length(dims) == ndims(data)
-        return new{T,N,T2,T3}(dims, data, broadcast_dims)
-    end
-end
-
-Base.size(F::Field)::Tuple = size(F.data)
-@propagate_inbounds Base.getindex(F::Field{T,N}, inds::Vararg{Int,N}) where {T,N} = F.data[inds...]
-@propagate_inbounds Base.setindex!(F::Field{T,N}, val, inds::Vararg{Int,N}) where {T,N} = F.data[inds...] = val
-Base.showarg(io::IO, F::Field, toplevel) = print(io, " Field with dims ", F.dims, " and broadcasted_dims ", F.broadcast_dims)
-
-# TODO: Sure that this does the right thing? Add to documentation of Field
-function (field_call::Field)(conn_in::Tuple{Array{Integer}, Tuple{Vararg{<:Dimension}}, Tuple{Vararg{<:Dimension}}})::Field
-
-    conn_data = conn_in[1]
-    conn_source = conn_in[2]
-    conn_target = conn_in[3]
-    
-    @assert maximum(conn_data) <= size(field_call)[1] && minimum(conn_data) >= 0
-
-    if ndims(field_call) == 1
-        res = map(x -> x == 0. ? 0. : getindex(field_call, Int.(x)), conn_data)
-    else
-        f(slice) = map(x -> x == 0. ? 0. : getindex(slice, Int.(x)), conn_data)
-        res = cat(map(f, eachslice(field_call.data, dims=2))...,dims=ndims(conn_data)+1)
-    end
-
-    dims = deleteat!([field_call.dims...], findall(x->x in conn_source, [field_call.dims...]))
-    dims = tuple(conn_target..., dims...)
-
-    return Field(dims, res)
-end
-
-# Macros ----------------------------------------------------------------------
-
 macro field_operator(expr::Expr)
 
-    function assign_dict(dict::Dict)
-    end
+    assign_dict(dict::Dict) = nothing
     function assign_dict(dict::Dict{String, Connectivity})
         global OFFSET_PROVIDER = dict
     end
 
-    dict = splitdef(expr)
+    ex_dict = splitdef(expr)
     
-    push!(dict[:kwargs], :($(Expr(:kw, :(offset_provider::Dict), :(Dict()))))) # version with named offset_provider = nothing
+    push!(ex_dict[:kwargs], :($(Expr(:kw, :(offset_provider::Union{Dict, Nothing}), :(Dict()))))) # version with named offset_provider = nothing
     new_exp = Expr(:call, assign_dict, :offset_provider)
-    dict[:body].args = [dict[:body].args[1:2]..., new_exp, dict[:body].args[3:end]...]
+    ex_dict[:body].args = [ex_dict[:body].args[1:2]..., new_exp, ex_dict[:body].args[3:end]...]
     
-    return esc(combinedef(dict))
+    return esc(combinedef(ex_dict))
+end
+
+make_field_operator((x) -> x + x)
+
+function make_field_operator(definition::Function)
+    function wrapper(*args, **kwargs, offset_provider)
+        global OFFSET_PROVIDER = offset_provider
+        result = definition(*args, **kwargs)
+        OFFSET_PROVIDER = Nothing
+        return result
+    end
+    return wrapper
 end
 
 # Built-ins ----------------------------------------------------------------------
@@ -162,6 +217,7 @@ function broadcast(n::Number, b_dims::D)::Field where D <: Tuple{Vararg{<:Dimens
     return Field((b_dims[1],), fill(n, 1), b_dims)
 end
 
+
 """
     neighbor_sum(f::Field; axis::Dimension)
 
@@ -171,12 +227,20 @@ function neighbor_sum(field_in::Field; axis::Dimension)::Field
     dim = findall(x -> x == axis, field_in.dims)[1]
     return Field((field_in.dims[1:dim-1]..., field_in.dims[dim+1:end]...), dropdims(sum(field_in.data, dims=dim), dims=dim)) 
 end
+"""
+    max_over(f::Field; axis::Dimension)
 
+Gives the maximum along the axis dimension. Outputs a field with dimensions size(f.dims)-1.
+"""
 function max_over(field_in::Field; axis::Dimension)::Field
     dim = findall(x -> x == axis, field_in.dims)[1]
     return Field((field_in.dims[1:dim-1]..., field_in.dims[dim+1:end]...), dropdims(maximum(field_in.data, dims=dim), dims=dim)) 
 end
+"""
+    min_over(f::Field; axis::Dimension)
 
+Gives the minimum along the axis dimension. Outputs a field with dimensions size(f.dims)-1.
+"""
 function min_over(field_in::Field; axis::Dimension)::Field
     dim = findall(x -> x == axis, field_in.dims)[1]
     return Field((field_in.dims[1:dim-1]..., field_in.dims[dim+1:end]...), dropdims(minimum(field_in.data, dims=dim), dims=dim)) 
