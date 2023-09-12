@@ -28,6 +28,10 @@ E2C = FieldOffset("E2C", source=(Cell,), target=(Edge, E2CDim))
 C2E = FieldOffset("C2E", source=(Edge,), target=(Cell, C2EDim))
 Koff = FieldOffset("Koff", source=(K,), target=(K,))
 
+
+a = Field((Vertex, K), reshape(collect(-3.0:2.0), (3, 2)))
+b = Field((K, Edge), reshape(collect(1.0:6.0), (2, 3)))
+
 # include("AtlasMesh.jl")
 # include("Advection.jl")
 # include("StateContainer.jl")

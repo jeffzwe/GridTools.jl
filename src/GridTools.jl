@@ -10,7 +10,7 @@ using MacroTools
 
 import Base.Broadcast: Extruded, Style, BroadcastStyle, ArrayStyle ,Broadcasted
 
-export Field, Dimension, Connectivity, FieldOffset, neighbor_sum, max_over, min_over, where, @field_operator #, broadcast
+export Field, Dimension, Connectivity, FieldOffset, neighbor_sum, max_over, min_over, where, @field_operator, @test #, broadcast
 
 
 # Lib ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -71,7 +71,7 @@ struct Field{T, N, T2 <: Tuple{Vararg{<:Dimension}}, T3 <: Tuple{Vararg{<:Dimens
     broadcast_dims::T3
     
     function Field(dims::T2, data::Array{T,N}, broadcast_dims::T3 = dims) where {T, N, T2 <: Tuple{Vararg{<:Dimension}}, T3 <: Tuple{Vararg{<:Dimension}}}
-        @assert length(dims) == ndims(data)
+        if ndims(data) != 0 @assert length(dims) == ndims(data) end
         return new{T,N,T2,T3}(dims, data, broadcast_dims)
     end
 end
@@ -79,7 +79,7 @@ end
 Base.size(F::Field)::Tuple = size(F.data)
 @propagate_inbounds Base.getindex(F::Field{T,N}, inds::Vararg{Int,N}) where {T,N} = F.data[inds...]
 @propagate_inbounds Base.setindex!(F::Field{T,N}, val, inds::Vararg{Int,N}) where {T,N} = F.data[inds...] = val
-Base.showarg(io::IO, F::Field, toplevel) = print(io, " Field with dims ", F.dims)
+Base.showarg(io::IO, F::Field, toplevel) = print(io, " Field with dims ", F.dims, " and broadcasted_dims ", F.broadcast_dims)
 
 # TODO: Add to documentation of Field
 function (field_call::Field)(conn_in::Tuple{Array{Integer}, Tuple{Vararg{<:Dimension}}, Tuple{Vararg{<:Dimension}}})::Field
@@ -160,6 +160,9 @@ function (f_off::FieldOffset)()::Tuple{Array{Integer,2}, Tuple{Vararg{<:Dimensio
     return (conn.data, f_off.source, f_off.target)
 end
 
+# Constants  -----------------------------------------------------------------------------------
+OFFSET_PROVIDER::Dict{String, Connectivity} = Dict{String, Connectivity}()
+
 
 # Macros ----------------------------------------------------------------------
 """
@@ -174,32 +177,22 @@ hello (generic function with 1 method)
 ...
 ```
 """
+
 macro field_operator(expr::Expr)
-
-    assign_dict(dict::Dict) = nothing
-    function assign_dict(dict::Dict{String, Connectivity})
-        global OFFSET_PROVIDER = dict
-    end
-
-    ex_dict = splitdef(expr)
     
-    push!(ex_dict[:kwargs], :($(Expr(:kw, :(offset_provider::Union{Dict, Nothing}), :(Dict()))))) # version with named offset_provider = nothing
-    new_exp = Expr(:call, assign_dict, :offset_provider)
-    ex_dict[:body].args = [ex_dict[:body].args[1:2]..., new_exp, ex_dict[:body].args[3:end]...]
-    
-    return esc(combinedef(ex_dict))
-end
-
-make_field_operator((x) -> x + x)
-
-function make_field_operator(definition::Function)
-    function wrapper(*args, **kwargs, offset_provider)
+    wrap = :(function wrapper(args...; offset_provider::Union{Dict{String, Connectivity}, Nothing} = nothing, kwargs...)
+        @assert isempty(OFFSET_PROVIDER)
         global OFFSET_PROVIDER = offset_provider
-        result = definition(*args, **kwargs)
-        OFFSET_PROVIDER = Nothing
+        f = $(esc(expr))
+        try
+            result = f(args...; kwargs...)
+        finally
+            global OFFSET_PROVIDER = Dict{String, Connectivity}()
+        end
         return result
-    end
-    return wrapper
+    end)
+
+    return Expr(:(=), esc(namify(expr)), wrap)
 end
 
 # Built-ins ----------------------------------------------------------------------
@@ -210,11 +203,12 @@ end
 Sets the broadcast dimension of Field f to b_dims
 """
 function broadcast(f::Field, b_dims::D)::Field where D <: Tuple{Vararg{<:Dimension}}
+    @assert issubset(f.dims, b_dims)
     return Field(f.dims, f.data, b_dims)
 end
 
 function broadcast(n::Number, b_dims::D)::Field where D <: Tuple{Vararg{<:Dimension}}
-    return Field((b_dims[1],), fill(n, 1), b_dims)
+    return Field((), fill(n), b_dims)
 end
 
 
@@ -285,13 +279,6 @@ where(mask::Field, t1::Tuple, t2::Tuple)::Field = map(x -> where(mask, x[1], x[2
 # Includes ------------------------------------------------------------------------------------
 
 include("CustBroadcast.jl")
-
-# Constants  -----------------------------------------------------------------------------------
-OFFSET_PROVIDER = Dict{String, Connectivity}()
-
-# function assign_dict(dict::Dict{String, Connectivity})
-#     global OFFSET_PROVIDER = dict
-# end
 
 end
 

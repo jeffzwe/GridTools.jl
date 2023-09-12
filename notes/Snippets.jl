@@ -162,7 +162,7 @@ end
 end
 
 
-# Snippets for custom broadcast ###############################################################################
+# Custom ordering ###############################################################################
 
 function custom_lt(x::Dimension, y::Dimension)
 
@@ -185,33 +185,6 @@ function custom_lt(x::Dimension, y::Dimension)
 end
 
 
-@inline function combine_axes(A::Tuple, B::Tuple)
-    length(A[1]) > length(B[1]) ? (A,B) = (B,A) : nothing  # swap A and B       
-
-    if issubset(A[1], B[1])
-        # A,B = (dims, axes(data), broadcast_dims)
-        @assert issubset(B[1], A[3]) "Dimension Mismatch between the broadcasted Dimensions of the two Fields"
-        matching_dims = get_dim_ind(A[1], B[1])
-        @assert A[2] == B[2][matching_dims] "Dimension Mismatch between the data Dimensions of the two Fields"
-        return B
-    elseif #!isempty(intersect(A[1],B[1]))  or other condition to merge existing overlapping dimensions
-        matching_dimsA = get_dim_ind(intersect(A[1],B[1]),A[1])
-        matching_dimsB = get_dim_ind(intersect(A[1],B[1]),B[1])
-        @assert A[2][matching_dimsA] == B[2][matching_dimsB] "Dimension Mismatch between the data Dimensions of the two Fields"
-
-        new_dims = [A[1]..., B[1]...]
-        new_axes = [A[2]..., B[2]...]
-        combine_tuple = hcat(new_dims, new_axes)
-        combine_tuple = unique(combine_tuple[sortperm(combine_tuple[:,1], lt=custom_lt),:],dims=1)
-        
-        return (tuple(combine_tuple[:,1]...), tuple(combine_tuple[:,2]...), union(A[3],B[3]))
-    else
-        error("Dimension Mismatch between the Dimensions of the two Fields")
-    end
-    
-end
-
-
 # PyCall Snippets
 
 config = py"config"
@@ -220,103 +193,21 @@ config = py"config"
 
 macro field_operator(expr::Expr)
 
-    function unpack_dict(dict::Dict)
-        for key in keys(dict)
-            @eval $(Symbol(key)) = $dict[$key]
-        end
+    assign_dict(dict::Nothing) = nothing
+    function assign_dict(dict::Dict{String, Connectivity})
+        global OFFSET_PROVIDER = dict
     end
 
-    dict = splitdef(expr)
-
-    push!(dict[:kwargs], :($(Expr(:kw, :(offset_provider::Dict), :(Dict()))))) # version with named offset_provider
-    
-    new_exp = Expr(:call, unpack_dict, :offset_provider)
-    dict[:body].args = [dict[:body].args[1:2]..., new_exp, dict[:body].args[3:end]...]
-    
-    combinedef(dict)
-end
-
-# Connectivity call function
-
-# TODO: Sure that this does the right thing? Add to documentation of Connectivity
-function (conn_call::Connectivity)(ind::Integer)::Connectivity
-    @assert conn_call.dims >= neighbor
-    return Connectivity(conn_call.data[:, neighbor], conn_call.source, (conn_call.target[1],), 1)
-end
-
-
-# Gebastel... gaht ned will de field offset ned im GridTools definiert isch. Und wennis us de funktion usenimm denn gahts nur ned will d expression im GridTools baut wird
-# und im GridTools sind halt d field offset ned definiert... choennt mer ev umgah...
-
-macro field_operator(expr::Expr)
-
-    function unpack_dict(dict::Dict)
-        for key in keys(dict)
-            conn = dict[key]
-            f_off = @eval $(Symbol(key))
-            @assert conn.source == f_off.source
-            @assert conn.target in f_off.target
-
-            #Create new Connectivity or change the existing one...
-            @eval $(Symbol(key)) = Connectivity(conn.data, f_off.source, f_off.target, conn.dims)
-        end
+    function unassign_dict()
+        global OFFSET_PROVIDER = Dict{String, Connectivity}()
     end
 
-    dict = splitdef(expr)
-
-    push!(dict[:kwargs], :($(Expr(:kw, :(offset_provider::Dict), :(Dict()))))) # version with named offset_provider
+    expr_dict = splitdef(expr)
     
-    new_exp = Expr(:call, unpack_dict, :offset_provider)
-    dict[:body].args = [dict[:body].args[1:2]..., new_exp, dict[:body].args[3:end]...]
+    push!(expr_dict[:kwargs], :($(Expr(:kw, :(offset_provider::Union{Dict, Nothing}), :(nothing))))) # version with named offset_provider = nothing
+    new_exp_assign = :(assign_dict(offset_provider))
+    new_exp_unassign = :(unassign_dict())
+    expr_dict[:body].args = [expr_dict[:body].args[1:2]..., new_exp_assign, expr_dict[:body].args[3:end]..., new_exp_unassign]
     
-    combinedef(dict)
-end
-
-
-
-# Snippets from explicit combine axes
-
-# Custom instantiate(): Dimension check and calculation of output dimension
-function Base.Broadcast.instantiate(bc::Broadcasted{ArrayStyle{Field}})
-    return Broadcasted{ArrayStyle{Field}}(bc.f, bc.args, combine_axes(bc)[2])
-end
-
-# -----------------------------------------------------------------------------------------------------------------------------------------
-
-# Checks dimension and broadcast combatibility of all fields
-@inline Base.axes(bc::Broadcasted{ArrayStyle{Field}}) =                 _axes(bc, bc.axes)
-_axes(::Broadcasted, axes::Tuple) =                                     axes
-@inline _axes(bc::Broadcasted, ::Nothing)  =                            combine_axes(bc.args...)
-
-# Helper function for combine_axes
-@inline get_dim_ind(dims::Tuple{}, b_dims::Tuple) =  ()
-@inline get_dim_ind(dims::Tuple, b_dims::Tuple) = [findall(x -> x == dims[1], b_dims)[1] , get_dim_ind(Base.tail(dims), b_dims)...]
-# Helper function for combine_axes
-@inline format(A::Field) = (A.dims, axes(A), A.broadcast_dims)
-@inline format(bc::Broadcasted{ArrayStyle{Field}}) = axes(bc)
-@inline format(x::Number) = nothing
-@inline format(t::Tuple) = t
-
-@inline combine_axes(i1, i2, rest...) = combine_axes(combine_axes(format(i1), format(i2)), rest...)
-@inline combine_axes(i, n::Nothing) = combine_axes(format(i))
-@inline combine_axes(n::Nothing, i) = combine_axes(format(i))
-@inline combine_axes(i) = format(i)
-@inline function combine_axes(A::Tuple, B::Tuple)
-    length(A[1]) > length(B[1]) ? (A,B) = (B,A) : nothing  # swap A and B       
-    # A,B are of the form (dims, axes(data), broadcast_dims)
-    @assert issubset(A[1], B[1]) "Dimension Mismatch between the Dimensions of the two Fields"
-    @assert issubset(B[1], A[3]) "Dimension Mismatch between the broadcasted Dimensions of the two Fields"
-    matching_dims = get_dim_ind(A[1], B[1])
-    @assert A[2] == B[2][matching_dims] "Dimension Mismatch between the data Dimensions of the two Fields"
-    return B
-end
-
-
-# -----------------------------------------------------------------------------------------------------------------------------------------
-
-# Custom similar(): Creates output object
-function Base.similar(bc::Broadcasted{ArrayStyle{Field}}, ::Type{ElType}) where ElType
-    output_props = combine_axes(bc.args...)
-    
-    Field(output_props[1], similar(Array{ElType}, output_props[2]), output_props[3])
+    return esc(combinedef(expr_dict))
 end
