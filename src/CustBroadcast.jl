@@ -14,7 +14,7 @@ end
 # Checks dimension and broadcast combatibility of all fields
 @inline Base.axes(bc::Broadcasted{ArrayStyle{Field}}) =                 f_axes(bc, bc.axes)
 f_axes(::Broadcasted, axes::Tuple) =                                    axes[2]
-@inline f_axes(bc::Broadcasted, ::Nothing)  =                           combine_axes(bc.args...)
+@inline f_axes(bc::Broadcasted, ::Nothing)  =                           combine_axes(bc.f, bc.args...)
 
 function ordered_subset(A::Tuple, B::Tuple)
     if isempty(A) || isempty(B) return false end
@@ -31,21 +31,40 @@ function ordered_subset(A::Tuple, B::Tuple)
 end
 
 # Helper function for combine_axes
-@inline function get_size(out_dims::Vector{Dimension}, A::Tuple, B::Tuple)::Tuple
+@inline function get_size(f::Function, out_dims::Vector{Dimension}, A::Tuple, B::Tuple)::Tuple
     out_size = Vector()
     for dim in out_dims
         ind_A = findfirst(x -> x == dim, A[1])
         ind_B = findfirst(x -> x == dim, B[1])
 
         if dim in A[1] && dim in B[1] && !isempty(A[2]) && !isempty(B[2])
-            @assert length(A[2][ind_A]) == length(B[2][ind_B])
-            push!(out_size, A[2][ind_A])
+            ###### old
+            # @assert length(A[2][ind_A]) == length(B[2][ind_B])      # TODO: Take this out if the lengths should always be concatinated
+            # push!(out_size, A[2][ind_A])
+            ######
+
+            if f == ifelse # union
+                push!(out_size, A[2][ind_A])
+            else # intersection
+                low = max(minimum(A[2][ind_A]), minimum(B[2][ind_B]))
+                up = min(maximum(A[2][ind_A]), maximum(B[2][ind_B]))
+                if low == 1                                         
+                    push!(out_size, Base.OneTo(up))                 
+                else
+                    push!(out_size, IdOffsetRange(1:up-low+1, low-1))          
+                end
+            end
         elseif dim in A[1] && !isempty(A[2])
             push!(out_size, A[2][ind_A])
         elseif dim in B[1] && !isempty(B[2])
             push!(out_size, B[2][ind_B])
         end
     end
+
+    if eltype(Tuple(out_size)) == AbstractUnitRange{Int64}
+        map!(IdOffsetRange, out_size, out_size) 
+    end
+
     return Tuple(out_size)
 end
 # Helper function for combine_axes
@@ -113,13 +132,13 @@ end
 @inline format(x::Number) = nothing
 @inline format(t::Tuple) = t
 
-@inline combine_axes(i1, i2, rest...) = combine_axes(combine_axes(format(i1), format(i2)), rest...)
-@inline combine_axes(i, n::Nothing) = combine_axes(format(i))
-@inline combine_axes(n::Nothing, i) = combine_axes(format(i))
-@inline combine_axes(i::Tuple, n::Tuple{}) = combine_axes(format(i))
-@inline combine_axes(n::Tuple{}, i::Tuple) = combine_axes(format(i))
-@inline combine_axes(i) = format(i)
-@inline function combine_axes(A::Tuple, B::Tuple)  
+@inline combine_axes(f::Function, i1, i2, rest...) = combine_axes(f, combine_axes(f, format(i1), format(i2)), rest...)
+@inline combine_axes(f::Function, i, n::Nothing) = combine_axes(f, format(i))
+@inline combine_axes(f::Function, n::Nothing, i) = combine_axes(f, format(i))
+@inline combine_axes(f::Function, i::Tuple, n::Tuple{}) = combine_axes(f, format(i))
+@inline combine_axes(f::Function, n::Tuple{}, i::Tuple) = combine_axes(f, format(i))
+@inline combine_axes(f::Function, i) = format(i)
+@inline function combine_axes(f::Function, A::Tuple, B::Tuple)  
     # A,B are of the form (dims, axes(data), broadcast_dims)
 
     if ordered_subset(A[1], B[3])
@@ -133,7 +152,7 @@ end
         broadcast_dims = promote_dims(A[3], B[3])
     end
 
-    out_size = get_size(out_dims, A, B)
+    out_size = get_size(f, out_dims, A, B)
 
     return (Tuple(out_dims), out_size, Tuple(broadcast_dims))
 end
@@ -221,7 +240,7 @@ Base.@propagate_inbounds f_broadcast_getindex(A::Tuple{Any}, I) = A[1]
 Base.@propagate_inbounds f_broadcast_getindex(A::Tuple, I) = A[I[1]]
 # Everything else falls back to dynamically dropping broadcasted indices based upon its axes
 Base.@propagate_inbounds f_broadcast_getindex(A, I) = A[Base.Broadcast.newindex(A, I)]
-Base.@propagate_inbounds f_broadcast_getindex(b::Extruded, i) = b.x[f_newindex(i, b.keeps, b.defaults)]
+Base.@propagate_inbounds f_broadcast_getindex(b::Extruded, i) = try b.x[f_newindex(i, b.keeps, b.defaults)] catch nothing end
 
 
 @inline f_newindex(I::CartesianIndex, keep, Idefault) = CartesianIndex(_f_newindex(I.I, keep, Idefault))

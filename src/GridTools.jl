@@ -7,10 +7,12 @@ using Profile
 using Debugger
 using Base: @propagate_inbounds
 using MacroTools
+using OffsetArrays
+using OffsetArrays: IdOffsetRange
 
 import Base.Broadcast: Extruded, Style, BroadcastStyle, ArrayStyle ,Broadcasted
 
-export Field, Dimension, Connectivity, FieldOffset, neighbor_sum, max_over, min_over, where, @field_operator, @test #, broadcast
+export Field, Dimension, Connectivity, FieldOffset, neighbor_sum, max_over, min_over, where, @field_operator #, broadcast
 
 
 # Lib ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -67,16 +69,17 @@ julia> field(E2C(1))
 """
 struct Field{T, N, T2 <: Tuple{Vararg{<:Dimension}}, T3 <: Tuple{Vararg{<:Dimension}}} <: AbstractArray{T,N}
     dims::T2
-    data::Array{T,N}
+    data::AbstractArray{T,N}
     broadcast_dims::T3
     
-    function Field(dims::T2, data::Array{T,N}, broadcast_dims::T3 = dims) where {T, N, T2 <: Tuple{Vararg{<:Dimension}}, T3 <: Tuple{Vararg{<:Dimension}}}
+    function Field(dims::T2, data::AbstractArray{T,N}, broadcast_dims::T3 = dims) where {T, N, T2 <: Tuple{Vararg{<:Dimension}}, T3 <: Tuple{Vararg{<:Dimension}}}
         if ndims(data) != 0 @assert length(dims) == ndims(data) end
         return new{T,N,T2,T3}(dims, data, broadcast_dims)
     end
 end
 
 Base.size(F::Field)::Tuple = size(F.data)
+Base.axes(F::Field)::Tuple = axes(F.data)
 @propagate_inbounds Base.getindex(F::Field{T,N}, inds::Vararg{Int,N}) where {T,N} = F.data[inds...]
 @propagate_inbounds Base.setindex!(F::Field{T,N}, val, inds::Vararg{Int,N}) where {T,N} = F.data[inds...] = val
 Base.showarg(io::IO, F::Field, toplevel) = print(io, " Field with dims ", F.dims, " and broadcasted_dims ", F.broadcast_dims)

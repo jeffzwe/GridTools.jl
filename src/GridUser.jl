@@ -2,6 +2,8 @@
 include("GridTools.jl")
 using .GridTools
 
+using OffsetArrays
+
 struct Cell_ <: Dimension end
 struct K_ <: Dimension end
 struct Edge_ <: Dimension end
@@ -31,6 +33,15 @@ Koff = FieldOffset("Koff", source=(K,), target=(K,))
 
 a = Field((Vertex, K), reshape(collect(-3.0:2.0), (3, 2)))
 b = Field((K, Edge), reshape(collect(1.0:6.0), (2, 3)))
+
+A = Field((Vertex, K), OffsetArray(reshape(collect(1.:15.), 3, 5), -1:1, 0:4))
+B = Field((K, Edge), OffsetArray(reshape(ones(6), 3, 2), 1:3, 1:2))
+
+mask_b = cat([true true false true true ; true false false false true ;true true true true true], [true false true false true ; true false false false true ;true true true true true], dims=3)
+
+mask = Field((Vertex, K, Edge), OffsetArray(mask_b, -1:1, 0:4, 1:2))
+
+
 
 # include("AtlasMesh.jl")
 # include("Advection.jl")
