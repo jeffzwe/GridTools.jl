@@ -12,7 +12,7 @@ using OffsetArrays: IdOffsetRange
 
 import Base.Broadcast: Extruded, Style, BroadcastStyle, ArrayStyle ,Broadcasted
 
-export Field, Dimension, Connectivity, FieldOffset, neighbor_sum, max_over, min_over, where, @field_operator #, broadcast
+export Field, FieldShape, Dimension, Connectivity, FieldOffset, shape, neighbor_sum, max_over, min_over, where, @field_operator #, broadcast
 
 
 # Lib ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -67,15 +67,26 @@ julia> field(E2C(1))
 ...
 ```
 """
-struct Field{T, N, T2 <: Tuple{Vararg{<:Dimension}}, T3 <: Tuple{Vararg{<:Dimension}}} <: AbstractArray{T,N}
-    dims::T2
+
+struct FieldShape
+    dims::Tuple{Vararg{<:Dimension}}
+    axes::Tuple{Vararg{<:AbstractUnitRange{Int64}}}
+    broadcast_dims::Tuple{Vararg{<:Dimension}}
+end
+
+struct Field{T, N} <: AbstractArray{T,N}
+    dims::Tuple{Vararg{<:Dimension}}
     data::AbstractArray{T,N}
-    broadcast_dims::T3
+    broadcast_dims::Tuple{Vararg{<:Dimension}}
     
-    function Field(dims::T2, data::AbstractArray{T,N}, broadcast_dims::T3 = dims) where {T, N, T2 <: Tuple{Vararg{<:Dimension}}, T3 <: Tuple{Vararg{<:Dimension}}}
+    function Field(dims::Tuple{Vararg{<:Dimension}}, data::AbstractArray{T,N}, broadcast_dims::Tuple{Vararg{<:Dimension}} = dims) where {T, N}
         if ndims(data) != 0 @assert length(dims) == ndims(data) end
-        return new{T,N,T2,T3}(dims, data, broadcast_dims)
+        return new{T,N}(dims, data, broadcast_dims)
     end
+end
+
+function shape(f::Field)
+    return FieldShape(f.dims, axes(f), f.broadcast_dims)
 end
 
 Base.size(F::Field)::Tuple = size(F.data)
