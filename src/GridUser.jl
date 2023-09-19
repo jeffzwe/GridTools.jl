@@ -41,6 +41,39 @@ mask_b = cat([true true false true true ; true false false false true ;true true
 
 mask = Field((Vertex, K, Edge), OffsetArray(mask_b, -1:1, 0:4, 1:2))
 
+edge_to_cell_table = [
+    [1  0];
+    [3  0];
+    [3  0];
+    [4  0];
+    [5  0];
+    [6  0];
+    [1  6];
+    [1  2];
+    [2  3];
+    [2  4];
+    [4  5];
+    [5  6]
+]
+
+cell_to_edge_table = [
+    [1   7   8];
+    [8   9  10];
+    [2   3   9];
+    [4  10  11];
+    [5  11  12];
+    [6   7  12]
+]
+
+
+E2C_offset_provider = Connectivity(edge_to_cell_table, (Cell,), (Edge,), 2)
+C2E_offset_provider = Connectivity(cell_to_edge_table, (Edge,), (Cell,), 3)
+
+offset_provider = Dict{String, Connectivity}(
+                   "E2C" => E2C_offset_provider,
+                   "C2E" => C2E_offset_provider
+                )
+
 
 
 # include("AtlasMesh.jl")

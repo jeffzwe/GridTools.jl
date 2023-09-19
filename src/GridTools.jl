@@ -177,6 +177,14 @@ end
 # Constants  -----------------------------------------------------------------------------------
 OFFSET_PROVIDER::Dict{String, Connectivity} = Dict{String, Connectivity}()
 
+assign_op(dict::Nothing) = nothing
+function assign_op(dict::Dict{String, Connectivity})
+    global OFFSET_PROVIDER = dict
+end
+
+function unassign_op()
+    global OFFSET_PROVIDER = Dict{String, Connectivity}()
+end
 
 # Macros ----------------------------------------------------------------------
 """
@@ -195,15 +203,15 @@ hello (generic function with 1 method)
 macro field_operator(expr::Expr)
     
     wrap = :(function wrapper(args...; offset_provider::Union{Dict{String, Connectivity}, Nothing} = nothing, kwargs...)
-        @assert isempty(OFFSET_PROVIDER)
-        global OFFSET_PROVIDER = offset_provider
+        @assert isempty(GridTools.OFFSET_PROVIDER)
+        GridTools.assign_op(offset_provider)
         f = $(esc(expr))
         try
             result = f(args...; kwargs...)
+            return result
         finally
-            global OFFSET_PROVIDER = Dict{String, Connectivity}()
+            GridTools.unassign_op()
         end
-        return result
     end)
 
     return Expr(:(=), esc(namify(expr)), wrap)
