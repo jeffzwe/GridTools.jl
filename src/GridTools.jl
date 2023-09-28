@@ -12,7 +12,7 @@ using OffsetArrays: IdOffsetRange
 
 import Base.Broadcast: Extruded, Style, BroadcastStyle, ArrayStyle ,Broadcasted
 
-export Field, FieldShape, Dimension, Connectivity, FieldOffset, shape, neighbor_sum, max_over, min_over, where, @field_operator #, broadcast
+export Field, FieldShape, Dimension, Connectivity, FieldOffset, shape, neighbor_sum, max_over, min_over, where, @field_operator, @create_dim, broadcast, DimensionKind, HORIZONTAL, VERTICAL, LOCAL
 
 
 # Lib ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -30,6 +30,22 @@ julia> Cell = Cell_()
 """
 abstract type Dimension end
 
+struct DimensionKind
+    value::String
+end
+
+const HORIZONTAL = DimensionKind("horizontal")
+const VERTICAL = DimensionKind("vertical")
+const LOCAL = DimensionKind("local")
+
+Base.length(d::Dimension) = 1
+function Base.iterate(d::Dimension, state=1)
+    if state==1
+        return (d, state+1)
+    else
+        return nothing
+    end
+end
 
 # Field struct --------------------------------------------------------------------
 
@@ -67,22 +83,26 @@ julia> field(E2C(1))
 ...
 ```
 """
+struct Field{T <: Union{AbstractFloat, Integer, Bool}, N, BD <: Tuple{Vararg{<:Dimension}}, D <: Tuple{Vararg{<:Dimension}}} <: AbstractArray{T,N}
+    dims::D
+    data::AbstractArray{T,N}
+    broadcast_dims::BD
+    
+    function Field(dims::D, data::AbstractArray{T,N}, broadcast_dims::BD = dims) where {T <: Union{AbstractFloat, Integer, Bool}, N, BD <: Tuple{Vararg{<:Dimension}}, D <: Tuple{Vararg{<:Dimension}}}
+        if ndims(data) != 0 @assert length(dims) == ndims(data) end
+        return new{T,N,BD,D}(dims, data, broadcast_dims)
+    end
+
+    function Field(dim::Dimension, data::AbstractArray{T,N}, broadcast_dims::Union{Dimension,BD} = dim) where {T <: Union{AbstractFloat, Integer, Bool}, N, BD <: Tuple{Vararg{<:Dimension}}}
+        if ndims(data) != 0 @assert ndims(data) == 1 end
+        return Field(Tuple(dim), data, Tuple(broadcast_dims))
+    end
+end
 
 struct FieldShape
     dims::Tuple{Vararg{<:Dimension}}
     axes::Tuple{Vararg{<:AbstractUnitRange{Int64}}}
     broadcast_dims::Tuple{Vararg{<:Dimension}}
-end
-
-struct Field{T, N} <: AbstractArray{T,N}
-    dims::Tuple{Vararg{<:Dimension}}
-    data::AbstractArray{T,N}
-    broadcast_dims::Tuple{Vararg{<:Dimension}}
-    
-    function Field(dims::Tuple{Vararg{<:Dimension}}, data::AbstractArray{T,N}, broadcast_dims::Tuple{Vararg{<:Dimension}} = dims) where {T, N}
-        if ndims(data) != 0 @assert length(dims) == ndims(data) end
-        return new{T,N}(dims, data, broadcast_dims)
-    end
 end
 
 function shape(f::Field)
@@ -94,6 +114,10 @@ Base.axes(F::Field)::Tuple = axes(F.data)
 @propagate_inbounds Base.getindex(F::Field{T,N}, inds::Vararg{Int,N}) where {T,N} = F.data[inds...]
 @propagate_inbounds Base.setindex!(F::Field{T,N}, val, inds::Vararg{Int,N}) where {T,N} = F.data[inds...] = val
 Base.showarg(io::IO, F::Field, toplevel) = print(io, " Field with dims ", F.dims, " and broadcasted_dims ", F.broadcast_dims)
+function Base.promote(f1::Field, f2::Field)
+    f1_new_data, f2_new_data = promote(f1.data, f2.data)
+    return Field(f1.dims, f1_new_data, f1.broadcast_dims),Field(f2.dims, f2_new_data, f2.broadcast_dims)
+end
 
 # TODO: Add to documentation of Field
 function (field_call::Field)(conn_in::Tuple{Array{Integer}, Tuple{Vararg{<:Dimension}}, Tuple{Vararg{<:Dimension}}})::Field
@@ -137,6 +161,10 @@ struct Connectivity
     source::Tuple{Vararg{<:Dimension}}
     target::Tuple{Vararg{<:Dimension}}
     dims::Integer
+
+    function Connectivity(data::Array{<:Integer, 2},source::Union{Dimension, Tuple{Vararg{<:Dimension}}}, target::Union{Dimension, Tuple{Vararg{<:Dimension}}}, dims::Integer)
+        return new(data, Tuple(source), Tuple(target), dims)
+    end
 end
 
 # FieldOffset struct -------------------------------------------------------------
@@ -157,8 +185,8 @@ struct FieldOffset
     source::Tuple{Vararg{<:Dimension}}
     target::Tuple{Vararg{<:Dimension}}
 
-    function FieldOffset(name::String; source::Tuple{Vararg{<:Dimension}}, target::Tuple{Vararg{<:Dimension}})::FieldOffset
-        new(name, source, target)
+    function FieldOffset(name::String; source::Union{Dimension, Tuple{Vararg{<:Dimension}}}, target::Union{Dimension, Tuple{Vararg{<:Dimension}}})::FieldOffset
+        new(name, Tuple(source), Tuple(target))
     end
 end
 
@@ -217,6 +245,17 @@ macro field_operator(expr::Expr)
     return Expr(:(=), esc(namify(expr)), wrap)
 end
 
+macro create_dim(sym::Symbol)
+    return esc(:(
+        struct $sym <: Dimension
+            kind::DimensionKind
+            function $sym(kind::DimensionKind = GridTools.HORIZONTAL)
+                return new(kind)
+            end
+        end
+    ))
+end 
+
 # Built-ins ----------------------------------------------------------------------
 
 """
@@ -263,8 +302,6 @@ function min_over(field_in::Field; axis::Dimension)::Field
 end
 
 
-@inbounds where(mask::Field, a::Union{Field, Real}, b::Union{Field, Real})::Field = ifelse.(mask, a, b)
-
 """
     where(mask::Field, true, false)
 
@@ -295,7 +332,7 @@ The `where` function builtin also allows for nesting of tuples. In this scenario
 `where(mask, ((a, b), (b, a)), ((c, d), (d, c)))` -->  `where(mask, (a, b), (c, d))` and `where(mask, (b, a), (d, c))` and then combine results to match the return type:
 """
 where(mask::Field, t1::Tuple, t2::Tuple)::Field = map(x -> where(mask, x[1], x[2]), zip(t1, t2))
-
+@inbounds where(mask::Field, a::Union{Field, Real}, b::Union{Field, Real})::Field = ifelse.(mask, promote(a, b)...)
 
 
 # Includes ------------------------------------------------------------------------------------

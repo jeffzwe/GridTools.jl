@@ -1,3 +1,5 @@
+ENV["PYCALL_JL_RUNTIME_PYTHON"] = Sys.which("python3.10")
+
 using PyCall
 
 # import .GridTools: Dimension, Field, Connectivity
@@ -114,7 +116,7 @@ struct AtlasMesh
 
     # poles
     pole_edges::Array # list of all pole edges
-    pole_edge_mask::Field{Bool, 1, Tuple{Edge_}, <:Tuple}
+    pole_edge_mask::Field{Bool, 1, Tuple{Edge_}}
     pole_edge_mask_np::Array
 
     # remote indices: for each geometric entity it's remote index
@@ -125,25 +127,25 @@ struct AtlasMesh
     edge_flags::Array
     cell_flags::Array
 
-    vertex_ghost_mask::Field{Bool, 1, Tuple{Vertex_}, <:Tuple}
+    vertex_ghost_mask::Field{Bool, 1, Tuple{Vertex_}}
 
     # geometry
     radius::Float64
-    xydeg_x::Field{<:AbstractFloat, 1, Tuple{Vertex_}, <:Tuple}
-    xydeg_y::Field{<:AbstractFloat, 1, Tuple{Vertex_}, <:Tuple}
+    xydeg_x::Field{<:AbstractFloat, 1, Tuple{Vertex_}}
+    xydeg_y::Field{<:AbstractFloat, 1, Tuple{Vertex_}}
     xydeg_np::Array
     xyrad::Array
     xyarc::Array
     xyz::Array
 
-    vol::Field{<:AbstractFloat, 1, Tuple{Vertex_}, <:Tuple}
+    vol::Field{<:AbstractFloat, 1, Tuple{Vertex_}}
     vol_np::Array
 
-    dual_face_normal_weighted_x::Field{<:AbstractFloat, 1, Tuple{Edge_}, <:Tuple}
-    dual_face_normal_weighted_y::Field{<:AbstractFloat, 1, Tuple{Edge_}, <:Tuple}
+    dual_face_normal_weighted_x::Field{<:AbstractFloat, 1, Tuple{Edge_}}
+    dual_face_normal_weighted_y::Field{<:AbstractFloat, 1, Tuple{Edge_}}
     dual_face_normal_weighted_np::Array
 
-    dual_face_orientation::Field{<:AbstractFloat, 2, Tuple{Vertex_, V2EDim_}, <:Tuple}
+    dual_face_orientation::Field{<:AbstractFloat, 2, Tuple{Vertex_, V2EDim_}}
 
     dual_face_orientation_np::Array
 
@@ -206,13 +208,13 @@ struct AtlasMesh
         @assert size(c2v_np)[1] == num_cells
         @assert size(c2e_np)[1] == num_cells
 
-        v2e = Connectivity(v2e_np, (Edge,), (Vertex,), size(v2e_np)[2])
-        v2c = Connectivity(v2c_np, (Cell,), (Vertex,), size(v2c_np)[2])
-        v2v = Connectivity(v2v_np, (Vertex,), (Vertex,), size(v2v_np)[2])
-        e2v = Connectivity(e2v_np, (Vertex,), (Edge,), size(e2v_np)[2])
-        e2c = Connectivity(e2c_np, (Cell,), (Edge,), size(e2c_np)[2])
-        c2v = Connectivity(c2v_np, (Vertex,), (Cell,), size(c2v_np)[2])
-        c2e = Connectivity(c2e_np, (Edge,), (Cell,), size(c2e_np)[2])
+        v2e = Connectivity(v2e_np, Edge, Vertex, size(v2e_np)[2])
+        v2c = Connectivity(v2c_np, Cell, Vertex, size(v2c_np)[2])
+        v2v = Connectivity(v2v_np, Vertex, Vertex, size(v2v_np)[2])
+        e2v = Connectivity(e2v_np, Vertex, Edge, size(e2v_np)[2])
+        e2c = Connectivity(e2c_np, Cell, Edge, size(e2c_np)[2])
+        c2v = Connectivity(c2v_np, Vertex, Cell, size(c2v_np)[2])
+        c2e = Connectivity(c2e_np, Edge, Cell, size(c2e_np)[2])
 
         vertex_remote_indices = mesh.nodes.field("remote_idx")
         edge_remote_indices = mesh.edges.field("remote_idx")
@@ -220,8 +222,8 @@ struct AtlasMesh
 
         # geometrical properties
         xydeg_np = mesh.nodes.lonlat
-        xydeg_x = Field((Vertex,),xydeg_np[:, 1])
-        xydeg_y = Field((Vertex,),xydeg_np[:, 2])
+        xydeg_x = Field(Vertex, xydeg_np[:, 1])
+        xydeg_y = Field(Vertex, xydeg_np[:, 2])
         xyrad = xydeg_np .* _deg2rad
         xyarc = xydeg_np .* _deg2rad .* radius
         phi, theta = xyrad[:, 2], xyrad[:, 1]
@@ -241,7 +243,7 @@ struct AtlasMesh
                 pole_edge_mask_np[e] = true
             end
         end
-        pole_edge_mask = Field((Edge,), pole_edge_mask_np)
+        pole_edge_mask = Field(Edge, pole_edge_mask_np)
 
         pole_edges = zeros(Integer, num_pole_edges)
         inum_pole_edge = 0
@@ -276,12 +278,12 @@ struct AtlasMesh
 
         # dual normal
         dual_face_normal_weighted_np = mesh.edges.field("dual_normals") .* radius .* _deg2rad
-        dual_face_normal_weighted_x = Field((Edge,), dual_face_normal_weighted_np[:,1])
-        dual_face_normal_weighted_y = Field((Edge,), dual_face_normal_weighted_np[:,2])
+        dual_face_normal_weighted_x = Field(Edge, dual_face_normal_weighted_np[:,1])
+        dual_face_normal_weighted_y = Field(Edge, dual_face_normal_weighted_np[:,2])
 
         # dual volume
         vol_np = mesh.nodes.field("dual_volumes") .* _deg2rad^2 .* radius^2
-        vol = Field((Vertex,), vol_np)
+        vol = Field(Vertex, vol_np)
 
         # offset_provider
         offset_provider = Dict{String, Union{Connectivity}}(

@@ -1,18 +1,19 @@
 
 include("GridTools.jl")
 using .GridTools
+# include("Jast_to_Foast.jl")
 
 using OffsetArrays
 
-struct Cell_ <: Dimension end
-struct K_ <: Dimension end
-struct Edge_ <: Dimension end
-struct Vertex_ <: Dimension end
-struct V2VDim_ <: Dimension end
-struct V2EDim_ <: Dimension end
-struct E2VDim_ <: Dimension end
-struct E2CDim_ <: Dimension end
-struct C2EDim_ <: Dimension end
+@create_dim Cell_
+@create_dim K_ 
+@create_dim Edge_ 
+@create_dim Vertex_ 
+@create_dim V2VDim_ 
+@create_dim V2EDim_ 
+@create_dim E2VDim_ 
+@create_dim E2CDim_ 
+@create_dim C2EDim_
 Cell = Cell_()
 K = K_()
 Edge = Edge_()
@@ -23,12 +24,12 @@ E2VDim = E2VDim_()
 E2CDim = E2CDim_()
 C2EDim = C2EDim_()
 
-V2V = FieldOffset("V2V", source=(Vertex,), target=(Vertex, V2VDim))
-E2V = FieldOffset("E2V", source=(Vertex,), target=(Edge, E2VDim))
-V2E = FieldOffset("V2E", source=(Edge,), target=(Vertex, V2EDim))
-E2C = FieldOffset("E2C", source=(Cell,), target=(Edge, E2CDim))
-C2E = FieldOffset("C2E", source=(Edge,), target=(Cell, C2EDim))
-Koff = FieldOffset("Koff", source=(K,), target=(K,))
+V2V = FieldOffset("V2V", source=Vertex, target=(Vertex, V2VDim))
+E2V = FieldOffset("E2V", source=Vertex, target=(Edge, E2VDim))
+V2E = FieldOffset("V2E", source=Edge, target=(Vertex, V2EDim))
+E2C = FieldOffset("E2C", source=Cell, target=(Edge, E2CDim))
+C2E = FieldOffset("C2E", source=Edge, target=(Cell, C2EDim))
+Koff = FieldOffset("Koff", source=K, target=K)
 
 
 a = Field((Vertex, K), reshape(collect(-3.0:2.0), (3, 2)))
@@ -66,13 +67,21 @@ cell_to_edge_table = [
 ]
 
 
-E2C_offset_provider = Connectivity(edge_to_cell_table, (Cell,), (Edge,), 2)
-C2E_offset_provider = Connectivity(cell_to_edge_table, (Edge,), (Cell,), 3)
+E2C_offset_provider = Connectivity(edge_to_cell_table, Cell, Edge, 2)
+C2E_offset_provider = Connectivity(cell_to_edge_table, Edge, Cell, 3)
 
 offset_provider = Dict{String, Connectivity}(
                    "E2C" => E2C_offset_provider,
                    "C2E" => C2E_offset_provider
                 )
+
+expr = :(function hello(x::Field{<:AbstractFloat, 1, Tuple{Vertex_}, <:Tuple}, z::Tuple{Integer, String}; y::Field, yy::Integer)
+
+    a = x[2]
+    field = Field((Vertex, K), matrix)
+
+    return x .+ sum(E2C(1)[1]), x
+end)
 
 
 

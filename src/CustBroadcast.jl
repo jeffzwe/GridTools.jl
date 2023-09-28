@@ -31,7 +31,7 @@ function ordered_subset(A::Tuple{Vararg{<:Dimension}}, B::Tuple{Vararg{<:Dimensi
 end
 
 # Helper function for combine_axes
-@inline function get_size(f::Function, out_dims::Vector{Dimension}, A::FieldShape, B::FieldShape)::Tuple
+@inline function get_size(f::Function, out_dims::Vector{<:Dimension}, A::FieldShape, B::FieldShape)::Tuple
     out_size = Vector()
     for dim in out_dims
         ind_A = findfirst(x -> x == dim, A.dims)
