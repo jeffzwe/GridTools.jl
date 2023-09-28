@@ -17,6 +17,8 @@ export Field, FieldShape, Dimension, Connectivity, FieldOffset, shape, neighbor_
 
 # Lib ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
+# Dimension --------------------------------------------------------------------
+
 """
     abstract type Dimension
 
@@ -39,13 +41,34 @@ const VERTICAL = DimensionKind("vertical")
 const LOCAL = DimensionKind("local")
 
 Base.length(d::Dimension) = 1
-function Base.iterate(d::Dimension, state=1)
-    if state==1
-        return (d, state+1)
-    else
-        return nothing
+Base.iterate(d::Dimension, state=1) = state==1 ? (d, state+1) : nothing
+Base.getindex(d::Dimension, offset::Integer) = d, offset
+
+# FieldOffset struct -------------------------------------------------------------
+
+"""
+    FieldOffset(name::String, source::Tuple, target::Tuple)
+
+You can transform fields (or tuples of fields) over one domain to another domain by using the call operator of the source field with a field offset as argument. This transform uses the connectivity between the source and target domains to find the values of adjacent mesh elements.
+
+# Examples
+```julia-repl
+julia> vertex2edge = FieldOffset("V2E", source=(Edge,), target=(Vertex, V2EDim))
+FieldOffset("V2E", (Edge_(),), (Vertex_(), V2EDim_()))
+```
+"""
+struct FieldOffset
+    name::String
+    source::Tuple{Vararg{<:Dimension}}
+    target::Tuple{Vararg{<:Dimension}}
+
+    function FieldOffset(name::String; source::Union{Dimension, Tuple{Vararg{<:Dimension}}}, target::Union{Dimension, Tuple{Vararg{<:Dimension}}})::FieldOffset
+        new(name, Tuple(source), Tuple(target))
     end
 end
+
+Base.getindex(f_off::FieldOffset, ind::Integer) = f_off, ind
+
 
 # Field struct --------------------------------------------------------------------
 
@@ -99,16 +122,38 @@ struct Field{T <: Union{AbstractFloat, Integer, Bool}, N, BD <: Tuple{Vararg{<:D
     end
 end
 
-struct FieldShape
-    dims::Tuple{Vararg{<:Dimension}}
-    axes::Tuple{Vararg{<:AbstractUnitRange{Int64}}}
-    broadcast_dims::Tuple{Vararg{<:Dimension}}
+# Call function to Field struct #TODO Add to documentation of Field
+(field_call::Field)(t::Tuple{FieldOffset, <:Integer}) = field_call(t...)
+function (field_call::Field)(f_off::FieldOffset, ind::Union{<:Integer, Nothing} = nothing)::Field
+
+    conn = OFFSET_PROVIDER[f_off.name]
+
+    conn_data = isnothing(ind) ? conn.data : conn.data[:,ind]
+    f_target = isnothing(ind) ? f_off.target : f_off.target[1]
+
+    @assert maximum(conn_data) <= size(field_call)[1] && minimum(conn_data) >= 0
+    @assert all(x -> x in f_off.source, conn.source) && all(x -> x in f_off.target, conn.target)
+
+    if ndims(field_call) == 1
+        res = map(x -> x == 0. ? 0. : getindex(field_call, Int.(x)), conn_data)
+    else
+        f(slice) = map(x -> x == 0. ? 0. : getindex(slice, Int.(x)), conn_data)
+        res = cat(map(f, eachslice(field_call.data, dims=2))...,dims=ndims(conn_data)+1)
+    end
+
+    dims = deleteat!([field_call.dims...], findall(x->x in f_off.source, [field_call.dims...]))
+    dims = tuple(f_target..., dims...)
+
+    return Field(dims, res)
 end
 
-function shape(f::Field)
-    return FieldShape(f.dims, axes(f), f.broadcast_dims)
+
+function (field_call::Field)(dim::Dimension, offset::Integer)
+    
+
 end
 
+# Field struct interfaces
 Base.size(F::Field)::Tuple = size(F.data)
 Base.axes(F::Field)::Tuple = axes(F.data)
 @propagate_inbounds Base.getindex(F::Field{T,N}, inds::Vararg{Int,N}) where {T,N} = F.data[inds...]
@@ -119,28 +164,16 @@ function Base.promote(f1::Field, f2::Field)
     return Field(f1.dims, f1_new_data, f1.broadcast_dims),Field(f2.dims, f2_new_data, f2.broadcast_dims)
 end
 
-# TODO: Add to documentation of Field
-function (field_call::Field)(conn_in::Tuple{Array{Integer}, Tuple{Vararg{<:Dimension}}, Tuple{Vararg{<:Dimension}}})::Field
-
-    conn_data = conn_in[1]
-    conn_source = conn_in[2]
-    conn_target = conn_in[3]
-    
-    @assert maximum(conn_data) <= size(field_call)[1] && minimum(conn_data) >= 0
-
-    if ndims(field_call) == 1
-        res = map(x -> x == 0. ? 0. : getindex(field_call, Int.(x)), conn_data)
-    else
-        f(slice) = map(x -> x == 0. ? 0. : getindex(slice, Int.(x)), conn_data)
-        res = cat(map(f, eachslice(field_call.data, dims=2))...,dims=ndims(conn_data)+1)
-    end
-
-    dims = deleteat!([field_call.dims...], findall(x->x in conn_source, [field_call.dims...]))
-    dims = tuple(conn_target..., dims...)
-
-    return Field(dims, res)
+# used for CustBroadcast. #TODO Maybe move to that file
+struct FieldShape
+    dims::Tuple{Vararg{<:Dimension}}
+    axes::Tuple{Vararg{<:AbstractUnitRange{Int64}}}
+    broadcast_dims::Tuple{Vararg{<:Dimension}}
 end
 
+function shape(f::Field)
+    return FieldShape(f.dims, axes(f), f.broadcast_dims)
+end
 
 # Connectivity struct ------------------------------------------------------------
 
@@ -167,40 +200,6 @@ struct Connectivity
     end
 end
 
-# FieldOffset struct -------------------------------------------------------------
-
-"""
-    FieldOffset(name::String, source::Tuple, target::Tuple)
-
-You can transform fields (or tuples of fields) over one domain to another domain by using the call operator of the source field with a field offset as argument. This transform uses the connectivity between the source and target domains to find the values of adjacent mesh elements.
-
-# Examples
-```julia-repl
-julia> vertex2edge = FieldOffset("V2E", source=(Edge,), target=(Vertex, V2EDim))
-FieldOffset("V2E", (Edge_(),), (Vertex_(), V2EDim_()))
-```
-"""
-struct FieldOffset
-    name::String
-    source::Tuple{Vararg{<:Dimension}}
-    target::Tuple{Vararg{<:Dimension}}
-
-    function FieldOffset(name::String; source::Union{Dimension, Tuple{Vararg{<:Dimension}}}, target::Union{Dimension, Tuple{Vararg{<:Dimension}}})::FieldOffset
-        new(name, Tuple(source), Tuple(target))
-    end
-end
-
-function (f_off::FieldOffset)(ind::Integer)::Tuple{Array{Integer,1}, Tuple{Vararg{<:Dimension}}, Tuple{Vararg{<:Dimension}}}
-    conn = OFFSET_PROVIDER[f_off.name]
-    @assert all(x -> x in f_off.source, conn.source) && all(x -> x in f_off.target, conn.target)
-    return (conn.data[:,ind], f_off.source, (f_off.target[1],))
-end
-
-function (f_off::FieldOffset)()::Tuple{Array{Integer,2}, Tuple{Vararg{<:Dimension}}, Tuple{Vararg{<:Dimension}}}
-    conn = OFFSET_PROVIDER[f_off.name]
-    @assert all(x -> x in f_off.source, conn.source) && all(x -> x in f_off.target, conn.target)
-    return (conn.data, f_off.source, f_off.target)
-end
 
 # Constants  -----------------------------------------------------------------------------------
 OFFSET_PROVIDER::Dict{String, Connectivity} = Dict{String, Connectivity}()
