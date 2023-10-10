@@ -157,7 +157,7 @@ struct AtlasMesh
 
 
     function AtlasMesh(grid; num_level::Integer, radius=6371.22e03, config=nothing)::AtlasMesh
-        if config == nothing
+        if isnothing(config)
             py"""
             config = Config()
             config["triangulate"] = False
@@ -289,8 +289,8 @@ struct AtlasMesh
         offset_provider = Dict{String, Union{Connectivity}}(
             "V2V" => v2v,
             "V2E" => v2e,
-            "E2V" => e2v
-            # "Koff" => K  # TODO(tehrengruber): using K here gives a terrible compilation error. Improve in GT4Py!
+            "E2V" => e2v,
+            "Koff" => K
         )
 
         remote_indices = Dict{Dimension, Array}(

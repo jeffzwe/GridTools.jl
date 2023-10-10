@@ -19,7 +19,7 @@ vertex_dim = getfield(mesh, Symbol(DIMENSION_TO_SIZE_ATTR[Vertex]))
 k_dim = getfield(mesh, Symbol(DIMENSION_TO_SIZE_ATTR[K]))
 edge_dim = getfield(mesh, Symbol(DIMENSION_TO_SIZE_ATTR[Edge]))
 
-level_indices = Field((K,), zeros(Int, k_dim))
+level_indices = Field(K, zeros(Int, k_dim))
 level_indices.data .= collect(0:29)
 
 

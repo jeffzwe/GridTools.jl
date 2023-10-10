@@ -12,12 +12,18 @@ using OffsetArrays: IdOffsetRange
 
 import Base.Broadcast: Extruded, Style, BroadcastStyle, ArrayStyle ,Broadcasted
 
-export Field, FieldShape, Dimension, Connectivity, FieldOffset, shape, neighbor_sum, max_over, min_over, where, @field_operator, @create_dim, broadcast, DimensionKind, HORIZONTAL, VERTICAL, LOCAL
+export Dimension, DimensionKind, HORIZONTAL, VERTICAL, LOCAL, Field, FieldShape, Connectivity, FieldOffset, shape, neighbor_sum, max_over, min_over, where, @field_operator, get_dim_name, get_dim_kind
 
 
 # Lib ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 # Dimension --------------------------------------------------------------------
+
+abstract type DimensionKind end
+
+struct HORIZONTAL <: DimensionKind end 
+struct VERTICAL <: DimensionKind end 
+struct LOCAL <: DimensionKind end
 
 """
     abstract type Dimension
@@ -30,19 +36,13 @@ julia> struct Cell_ <: Dimension end
 julia> Cell = Cell_()
 ```
 """
-abstract type Dimension end
-
-struct DimensionKind
-    value::String
-end
-
-const HORIZONTAL = DimensionKind("horizontal")
-const VERTICAL = DimensionKind("vertical")
-const LOCAL = DimensionKind("local")
+struct Dimension{name, kind <: DimensionKind} end
 
 Base.length(d::Dimension) = 1
 Base.iterate(d::Dimension, state=1) = state==1 ? (d, state+1) : nothing
 Base.getindex(d::Dimension, offset::Integer) = d, offset
+get_dim_name(d::Dimension) = typeof(d).parameters[1]
+get_dim_kind(d::Dimension) = typeof(d).parameters[2]
 
 # FieldOffset struct -------------------------------------------------------------
 
@@ -63,6 +63,7 @@ struct FieldOffset
     target::Tuple{Vararg{<:Dimension}}
 
     function FieldOffset(name::String; source::Union{Dimension, Tuple{Vararg{<:Dimension}}}, target::Union{Dimension, Tuple{Vararg{<:Dimension}}})::FieldOffset
+        if length(target) == 2 @assert typeof(target[2]).parameters[2] == LOCAL ("Second dimension in offset must be a local dimension.") end
         new(name, Tuple(source), Tuple(target))
     end
 end
@@ -122,8 +123,8 @@ struct Field{T <: Union{AbstractFloat, Integer, Bool}, N, BD <: Tuple{Vararg{<:D
     end
 end
 
-# Call function to Field struct #TODO Add to documentation of Field
-(field_call::Field)(t::Tuple{FieldOffset, <:Integer}) = field_call(t...)
+# Call functions to Field struct #TODO Add to documentation of Field
+(field_call::Field)(t::Tuple{FieldOffset, <:Integer})::Field = field_call(t...)
 function (field_call::Field)(f_off::FieldOffset, ind::Union{<:Integer, Nothing} = nothing)::Field
 
     conn = OFFSET_PROVIDER[f_off.name]
@@ -147,10 +148,11 @@ function (field_call::Field)(f_off::FieldOffset, ind::Union{<:Integer, Nothing} 
     return Field(dims, res)
 end
 
-
-function (field_call::Field)(dim::Dimension, offset::Integer)
-    
-
+function (field_call::Field)(t::Tuple{<:Dimension, <:Integer})::Field
+    dim_ind = findall(x -> x == t[1], field_call.dims)[1]
+    new_size = zeros(Integer, length(axes(field_call.data)))
+    new_size[dim_ind] = t[2]
+    return Field(field_call.dims, OffsetArray(field_call.data, new_size...), field_call.broadcast_dims)
 end
 
 # Field struct interfaces
@@ -158,13 +160,13 @@ Base.size(F::Field)::Tuple = size(F.data)
 Base.axes(F::Field)::Tuple = axes(F.data)
 @propagate_inbounds Base.getindex(F::Field{T,N}, inds::Vararg{Int,N}) where {T,N} = F.data[inds...]
 @propagate_inbounds Base.setindex!(F::Field{T,N}, val, inds::Vararg{Int,N}) where {T,N} = F.data[inds...] = val
-Base.showarg(io::IO, F::Field, toplevel) = print(io, " Field with dims ", F.dims, " and broadcasted_dims ", F.broadcast_dims)
+Base.showarg(io::IO, F::Field, toplevel) = print(io, " Field with buffer_dims ", typeof(F.dims), " and broadcasted_dims ", typeof(F.broadcast_dims))
 function Base.promote(f1::Field, f2::Field)
     f1_new_data, f2_new_data = promote(f1.data, f2.data)
     return Field(f1.dims, f1_new_data, f1.broadcast_dims),Field(f2.dims, f2_new_data, f2.broadcast_dims)
 end
 
-# used for CustBroadcast. #TODO Maybe move to that file
+# used for custom Broadcast #TODO Maybe move to CustBroadcast.jl
 struct FieldShape
     dims::Tuple{Vararg{<:Dimension}}
     axes::Tuple{Vararg{<:AbstractUnitRange{Int64}}}
@@ -201,7 +203,7 @@ struct Connectivity
 end
 
 
-# Constants  -----------------------------------------------------------------------------------
+# OFFSET_PROVIDER  -----------------------------------------------------------------------------------
 OFFSET_PROVIDER::Dict{String, Connectivity} = Dict{String, Connectivity}()
 
 assign_op(dict::Nothing) = nothing
@@ -213,7 +215,10 @@ function unassign_op()
     global OFFSET_PROVIDER = Dict{String, Connectivity}()
 end
 
-# Macros ----------------------------------------------------------------------
+# Field operator ----------------------------------------------------------------------
+
+py_field_ops = Dict()
+
 """
     @field_operator
 
@@ -226,7 +231,6 @@ hello (generic function with 1 method)
 ...
 ```
 """
-
 macro field_operator(expr::Expr)
     
     wrap = :(function wrapper(args...; offset_provider::Union{Dict{String, Connectivity}, Nothing} = nothing, kwargs...)
@@ -241,19 +245,10 @@ macro field_operator(expr::Expr)
         end
     end)
 
+    # field_ops[namify(expr)] = FieldOperator object # TODO
+
     return Expr(:(=), esc(namify(expr)), wrap)
 end
-
-macro create_dim(sym::Symbol)
-    return esc(:(
-        struct $sym <: Dimension
-            kind::DimensionKind
-            function $sym(kind::DimensionKind = GridTools.HORIZONTAL)
-                return new(kind)
-            end
-        end
-    ))
-end 
 
 # Built-ins ----------------------------------------------------------------------
 

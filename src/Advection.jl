@@ -16,9 +16,9 @@ end
     num_level::Integer
     )
     return with_boundary_values(
-        psi(Koff(2)) - psi(Koff(1)),
-        psi(Koff(2)) - psi(Koff()),
-        psi(Koff(1)) - psi(Koff(1)),
+        psi(Koff[2]) - psi(Koff[1]),
+        psi(Koff[2]) - psi(Koff),
+        psi(Koff[1]) - psi(Koff[1]),
         level_indices, num_level
     )
 end
@@ -29,8 +29,8 @@ end
     pole_edge_mask::Field{Bool, 1, Tuple{Edge_}}
     )::Tuple{Field, Field}
     pole_bc = where(pole_edge_mask, -1.0, 1.0)
-    vel_edges_x = 0.5 * (vel_x(E2V(1)) + pole_bc * vel_x(E2V(1)))
-    vel_edges_y = 0.5 * (vel_y(E2V(1)) + pole_bc * vel_y(E2V(1)))
+    vel_edges_x = 0.5 * (vel_x(E2V[1]) + pole_bc * vel_x(E2V[1]))
+    vel_edges_y = 0.5 * (vel_y(E2V[1]) + pole_bc * vel_y(E2V[1]))
     return vel_edges_x, where(pole_edge_mask, 0.0, vel_edges_y)
 end
 
@@ -45,8 +45,8 @@ end
     dual_face_normal_weighted_x = GridTools.broadcast(dual_face_normal_weighted_x, (Edge, K))
     dual_face_normal_weighted_y = GridTools.broadcast(dual_face_normal_weighted_y, (Edge, K))
     pole_bc = where(pole_edge_mask, -1.0, 1.0)
-    vel_edges_x = 0.5 .* (vel_x(E2V(1)) .+ pole_bc .* vel_x(E2V(2)))
-    vel_edges_y = 0.5 .* (vel_y(E2V(1)) .+ pole_bc .* vel_y(E2V(2)))
+    vel_edges_x = 0.5 .* (vel_x(E2V[1]) .+ pole_bc .* vel_x(E2V[2]))
+    vel_edges_y = 0.5 .* (vel_y(E2V[1]) .+ pole_bc .* vel_y(E2V[2]))
     vel_edges_y = where(pole_edge_mask, 0.0, vel_edges_y)
     # vel_edges_x = where(pole_edge_mask, 0.0, vel_edges_x)
     return vel_edges_x .* dual_face_normal_weighted_x .+ vel_edges_y .* dual_face_normal_weighted_y
@@ -62,14 +62,14 @@ end
     )::Field{<:AbstractFloat, 2, Tuple{Edge_, K_}}
     vel_x_face, vel_y_face = advector_in_edges(vel_x, vel_y, pole_edge_mask)
     wnv = vel_x_face .* dual_face_normal_weighted_x .+ vel_y_face .* dual_face_normal_weighted_y
-    return where(wnv .> 0.0, rho(E2V(1)) .* wnv, rho(E2V(2)) .* wnv)
+    return where(wnv .> 0.0, rho(E2V[1]) .* wnv, rho(E2V[2]) .* wnv)
 end
 
 @field_operator function upwind_flux(
     rho::Field{<:AbstractFloat, 2, Tuple{Vertex_, K_}},
     veln::Field{<:AbstractFloat, 2, Tuple{Edge_, K_}}
     )::Field{<:AbstractFloat, 2, Tuple{Edge_, K_}}
-    return where(veln .> 0.0, rho(E2V(1)) .* veln, (rho(E2V(2)) .* veln))
+    return where(veln .> 0.0, rho(E2V[1]) .* veln, (rho(E2V[2]) .* veln))
 end
 
 @field_operator function centered_flux(
@@ -77,7 +77,7 @@ end
     veln::Field{<:AbstractFloat, 2, Tuple{Edge_, K_}}
     )::Field{<:AbstractFloat, 2, Tuple{Edge_, K_}}
     return (
-        0.5 .* veln .* (rho(E2V(2)) + rho(E2V(1)))
+        0.5 .* veln .* (rho(E2V[2]) + rho(E2V[1]))
     )  # todo(ckuehnlein): polar flip for u and v transport later
 end
 
@@ -88,8 +88,8 @@ end
     cfluxdiv::Field{<:AbstractFloat, 2, Tuple{Vertex_, K_}},
     dt::AbstractFloat
     )::Field{<:AbstractFloat, 2, Tuple{Edge_, K_}}
-    return 0.5 .* abs.(veln) .* (rho(E2V(2)) - rho(E2V(1))) .- dt.* veln .* 0.5 .* (
-        (cfluxdiv(E2V(2)) .+ cfluxdiv(E2V(1))) ./ (grg(E2V(2)) .+ grg(E2V(1)))
+    return 0.5 .* abs.(veln) .* (rho(E2V[2]) - rho(E2V[1])) .- dt.* veln .* 0.5 .* (
+        (cfluxdiv(E2V[2]) .+ cfluxdiv(E2V[1])) ./ (grg(E2V[2]) .+ grg(E2V[1]))
     )
 end
 
@@ -98,9 +98,9 @@ end
     cn::Field{<:AbstractFloat, 2, Tuple{Vertex_, K_}},
     cp::Field{<:AbstractFloat, 2, Tuple{Vertex_, K_}},
     )::Field{<:AbstractFloat, 2, Tuple{Edge_, K_}}
-    return max.(0.0, flux) .* min.(1.0, min.(cp(E2V(2)), cn(E2V(1)))) + min.(
+    return max.(0.0, flux) .* min.(1.0, min.(cp(E2V[2]), cn(E2V[1]))) + min.(
         0.0, flux
-    ) .* min.(1.0, min.(cn(E2V(2)), cp(E2V(1))))
+    ) .* min.(1.0, min.(cn(E2V[2]), cp(E2V[1])))
 end
 
 @field_operator function flux_divergence(
@@ -109,7 +109,7 @@ end
     gac::Field{<:AbstractFloat, 1, Tuple{Vertex_}},
     dual_face_orientation::Field{<:AbstractFloat, 2, Tuple{Vertex_, V2EDim_}}
     )::Field{<:AbstractFloat, 2, Tuple{Vertex_, K_}}
-    return 1.0 ./ (vol .* gac) .* neighbor_sum(flux(V2E()) .* dual_face_orientation, axis=V2EDim)
+    return 1.0 ./ (vol .* gac) .* neighbor_sum(flux(V2E) .* dual_face_orientation, axis=V2EDim)
 end
 
 @field_operator function nonoscoefficients_cn(
@@ -124,8 +124,8 @@ end
     )::Field{<:AbstractFloat, 2, Tuple{Vertex_, K_}}
     zrhout = (1.0 ./ vol) .* neighbor_sum(
         (
-            max.(0.0, flux(V2E())) .* max.(0.0, dual_face_orientation)
-            .+ min.(0.0, flux(V2E())) .* min.(0.0, dual_face_orientation)
+            max.(0.0, flux(V2E)) .* max.(0.0, dual_face_orientation)
+            .+ min.(0.0, flux(V2E)) .* min.(0.0, dual_face_orientation)
         ),
         axis=V2EDim,
     )
@@ -143,8 +143,8 @@ end
     dual_face_orientation::Field{<:AbstractFloat, 2, Tuple{Vertex_, V2EDim_}}
     )::Field{<:AbstractFloat, 2, Tuple{Vertex_, K_}}
     zrhin = (1.0 ./ vol) .* neighbor_sum(
-        -min.(0.0, flux(V2E())) .* max.(0.0, dual_face_orientation)
-        - max.(0.0, flux(V2E())) .* min.(0.0, dual_face_orientation),
+        -min.(0.0, flux(V2E)) .* max.(0.0, dual_face_orientation)
+        - max.(0.0, flux(V2E)) .* min.(0.0, dual_face_orientation),
         axis=V2EDim,
     )
     return (psimax .- psi) .* gac ./ (zrhin .* dt .+ eps)
@@ -153,13 +153,13 @@ end
 @field_operator function local_min(
     psi::Field{<:AbstractFloat, 2, Tuple{Vertex_, K_}}
     )::Field{<:AbstractFloat, 2, Tuple{Vertex_, K_}}
-    return min.(psi, min_over(psi(V2V()), axis=V2VDim))
+    return min.(psi, min_over(psi(V2V), axis=V2VDim))
 end
 
 @field_operator function local_max(
     psi::Field{<:AbstractFloat, 2, Tuple{Vertex_, K_}}
     )::Field{<:AbstractFloat, 2, Tuple{Vertex_, K_}}
-    return max.(psi, max_over(psi(V2V()), axis=V2VDim))
+    return max.(psi, max_over(psi(V2V), axis=V2VDim))
 end
 
 @field_operator function update_solution(
@@ -170,7 +170,7 @@ end
     gac::Field{<:AbstractFloat, 1, Tuple{Vertex_}},
     dual_face_orientation::Field{<:AbstractFloat, 2, Tuple{Vertex_, V2EDim_}}
     )::Field{<:AbstractFloat, 2, Tuple{Vertex_, K_}}
-    return rho .- dt ./ (vol .* gac) .* neighbor_sum(flux(V2E()) .* dual_face_orientation, axis=V2EDim)
+    return rho .- dt ./ (vol .* gac) .* neighbor_sum(flux(V2E) .* dual_face_orientation, axis=V2EDim)
 end
 
 @field_operator function advect_density(
@@ -302,7 +302,7 @@ end
     gac = GridTools.broadcast(gac, (Vertex, K))
     vol = GridTools.broadcast(vol, (Vertex, K))
     dual_face_orientation = GridTools.broadcast(dual_face_orientation, (Vertex, V2EDim, K))
-    rho = rho .- dt ./ (vol .* gac) .* neighbor_sum(flux(V2E()) .* dual_face_orientation, axis=V2EDim)
+    rho = rho .- dt ./ (vol .* gac) .* neighbor_sum(flux(V2E) .* dual_face_orientation, axis=V2EDim)
     return rho
 end
 

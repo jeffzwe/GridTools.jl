@@ -1,19 +1,25 @@
 
 include("GridTools.jl")
 using .GridTools
-# include("Jast_to_Foast.jl")
+
+# include("AtlasMesh.jl")
+# include("Advection.jl")
+# include("StateContainer.jl")
+# include("Metric.jl")
+# include("AdvectionTest.jl")
+include("GT2PY.jl")
 
 using OffsetArrays
 
-@create_dim Cell_
-@create_dim K_ 
-@create_dim Edge_ 
-@create_dim Vertex_ 
-@create_dim V2VDim_ 
-@create_dim V2EDim_ 
-@create_dim E2VDim_ 
-@create_dim E2CDim_ 
-@create_dim C2EDim_
+Cell_ = Dimension{:Cell_, HORIZONTAL}
+K_ = Dimension{:K_, HORIZONTAL}
+Edge_ = Dimension{:Edge_, HORIZONTAL}
+Vertex_ = Dimension{:Vertex_, HORIZONTAL}
+V2VDim_ = Dimension{:V2VDim_, LOCAL}
+V2EDim_ = Dimension{:V2EDim_, LOCAL} 
+E2VDim_ = Dimension{:E2VDim_, LOCAL} 
+E2CDim_ = Dimension{:E2CDim_, LOCAL}
+C2EDim_ = Dimension{:C2EDim_, LOCAL}
 Cell = Cell_()
 K = K_()
 Edge = Edge_()
@@ -32,7 +38,7 @@ C2E = FieldOffset("C2E", source=Edge, target=(Cell, C2EDim))
 Koff = FieldOffset("Koff", source=K, target=K)
 
 
-a = Field((Vertex, K), reshape(collect(-3.0:2.0), (3, 2)))
+a = Field((Cell, K), reshape(collect(-3.0:8.0), (6, 2)))
 b = Field((K, Edge), reshape(collect(1.0:6.0), (2, 3)))
 
 A = Field((Vertex, K), OffsetArray(reshape(collect(1.:15.), 3, 5), -1:1, 0:4))
@@ -75,18 +81,21 @@ offset_provider = Dict{String, Connectivity}(
                    "C2E" => C2E_offset_provider
                 )
 
-expr = :(function hello(x::Field{<:AbstractFloat, 1, Tuple{Vertex_}, <:Tuple}, z::Tuple{Integer, String}; y::Field, yy::Integer)
+expr_abitharder = :(function hello(x::Field{<:AbstractFloat, 1, Tuple{Vertex_}}, z::Tuple{Integer, String}; y::Field, yy::Integer)
 
     a = x[2]
-    field = Field((Vertex, K), matrix)
 
-    return x .+ sum(E2C(1)[1]), x
+    return x .+ sum(E2C), x
 end)
 
+expr = :(function hello(inp::Field{Float64, 2, Tuple{Cell_, K_}})
+    b = sin(inp(E2C[1]))
+
+    return b
+end)
+
+closure_vars = get_closure_vars(expr)
+foast_node = visit(expr, closure_vars)
 
 
-# include("AtlasMesh.jl")
-# include("Advection.jl")
-# include("StateContainer.jl")
-# include("Metric.jl")
-# include("AdvectionTest.jl")
+
