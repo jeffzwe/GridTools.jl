@@ -88,14 +88,29 @@ expr_abitharder = :(function hello(x::Field{<:AbstractFloat, 1, Tuple{Vertex_}},
     return x .+ sum(E2C), x
 end)
 
-expr = :(function hello(inp::Field{Float64, 2, Tuple{Cell_, K_}})
-    b = sin(inp(E2C[1]))
+expr = :(function hello(f::Field{Float64, 1, Tuple{Cell_}})
+           tmp = f
+           f = tmp
+           tmp2 = f
+           return tmp2
+       end)  
 
-    return b
-end)
+expr = :(function hello(f::Field{Float64, 1, Tuple{Cell_}})
+       tmp = f .- 1
+       a = 2 + tmp
+       a = a + tmp
+       tmp = a + tmp .+ f
+       tmp = 3 + a
+       return tmp + a
+   end)
 
-closure_vars = get_closure_vars(expr)
-foast_node = visit(expr, closure_vars)
+# jast_to_foast(expr)
+
+
+
+
+
+
 
 
 

@@ -82,11 +82,26 @@ builtin_op = Dict(
 # Notes:
 # Annotations should be an empty dictionary. Can change this later on.
 
-function jast_to_foast(expr::Expr)
+function jast_to_foast(definition::Expr)
+    definition = preprocess_definiton(definition)
+
     annotations = get_annotation(expr)
     closure_vars = get_closure_vars(expr)
     foast_node = visit(expr, closure_vars)
 
+    foast_node = postprocess_definition(foast_node, closure_vars, annotations)
+
+    return foast_node
+end
+
+function preprocess_definiton(definition::Expr)
+    ssa = single_static_assign_pass(definition)
+    sat = single_assign_target_pass(ssa)
+    ucc = unchain_compairs_pass(sat)
+    return ucc
+end
+
+function postprocess_definition(foast_node, closure_vars, annotations)
     foast_node = ClosureVarFolding.apply(foast_node, closure_vars)
     foast_node = DeadClosureVarElimination.apply(foast_node)
     foast_node = ClosureVarTypeDeduction.apply(foast_node, closure_vars)
@@ -94,13 +109,67 @@ function jast_to_foast(expr::Expr)
     foast_node = UnpackedAssignPass.apply(foast_node)
 
     if haskey(annotations, "return")
-        # TODO(tehrengruber): use `type_info.return_type` when the type of the
         annotated_return_type = annotations["return"]
-        #  arguments becomes available here
         @assert annotated_return_type == foast_node.type.returns  ("Annotated return type does not match deduced return type. Expected $(foast_node.type.returns), but got $annotated_return_type.")
     end
 
     return foast_node
+end
+
+function single_static_assign_pass(expr::Expr)
+    var_trans = Dict()
+    new_to_og = Dict()
+    og_to_new = Dict()
+
+    postwalk(expr) do x
+        if @capture(x, name_ = value_)
+            if name in keys(new_to_og)
+                og_name = pop!(new_to_og, name)
+                var_trans[og_name] = var_trans[og_name]+1
+            else
+                og_name = name
+                var_trans[name] = 0
+            end
+            new_name = generate_unique_name(og_name, var_trans)
+            new_to_og[new_name] = og_name
+            og_to_new[og_name] = new_name
+            
+            return :($new_name = $value)
+        elseif x in keys(og_to_new)
+            return og_to_new[x]
+        else
+            return x
+        end
+    end
+end
+
+function generate_unique_name(name::Symbol, var_trans::Dict)
+    return Symbol("$(name)ᐞ$(var_trans[name])")
+end
+
+function single_assign_target_pass(expr::Expr)
+    return postwalk(expr) do x
+        @capture(x, (t1_, t2_ = val1_, val2_) | ((t1_, t2_) = (val1_, val2_)) | (t1_, t2_ = (val1_, val2_)) | ((t1_, t2_) = val1_, val2_)) || return x
+        return :($t1 = $val1; $t2 = $val2)
+    end
+end
+
+function unchain_compairs_pass(expr::Expr)
+    return postwalk(expr) do x
+        if typeof(x) == Expr && x.head == :comparison
+            return rec_unchain(x.args)
+        else
+            return x
+        end
+    end
+end
+
+function rec_unchain(args::Array)
+    if length(args) == 3
+        return Expr(:call, args[2], args[1], args[3])  # Alternative syntax: :($(args[2])($(args[1]), $(args[3])))
+    else
+        return Expr(:&&, Expr(:call, args[2], args[1], args[3]), rec_unchain(args[3:end]))
+    end
 end
 
 function get_annotation(expr::Expr)
@@ -119,6 +188,11 @@ function get_closure_vars(expr::Expr)
 end
 
 function get_j_cvars(expr::Expr)
+
+    expr_def = splitdef(expr)
+    @assert all(typeof.(expr_def[:args]) .== Expr) ("Field operator parameters must be type annotated.")
+    @assert all(typeof.(expr_def[:kwargs]) .== Expr) ("Field operator parameters must be type annotated.")
+
     local_vars = Set()
     closure_names = Set()
     closure_vars = Dict()

@@ -12,9 +12,11 @@ scalar_types = Dict(
     :Bool => ts.ScalarKind."BOOL",
     :Int32 => ts.ScalarKind."INT32",
     :Int64 => ts.ScalarKind."INT64",
+    :Integer => ts.ScalarKind."INT64",
     :(<:Integer) => ts.ScalarKind."INT64",
     :Float32 => ts.ScalarKind."FLOAT32",
     :Float64 => ts.ScalarKind."FLOAT64",
+    :AbstractFloat => ts.ScalarKind."FLOAT64",
     :(<:AbstractFloat) => ts.ScalarKind."FLOAT64",
     :String => ts.ScalarKind."STRING"
 )
@@ -214,7 +216,7 @@ function visit_(sym::Val{:parameters}, args::Array, outer_loc)
 end
 
 function visit_(sym::Val{:comparison}, args::Array, outer_loc)
-    return visit(unchain_comp(args), outer_loc)
+    throw("All compairs should have been eliminated in the preprocessing step. Somethings not right") #TODO
 end
 
 function visit_(sym::Val{:(.)}, args::Array, outer_loc)
@@ -348,13 +350,7 @@ end
 # ----------------------------------------------------------------------------------------------------------------------------------
 # Helper functions
 
-function unchain_comp(args::Array)
-    if length(args) == 3
-        return Expr(:call, args[2], args[1], args[3])  # Alternative syntax: :($(args[2])($(args[1]), $(args[3])))
-    else
-        return Expr(:&&, Expr(:call, args[2], args[1], args[3]), unchain_comp(args[3:end]))
-    end
-end
+
 
 function get_location(linenuno::LineNumberNode)
     return SourceLocation(string(linenuno.file), linenuno.line, 1, end_line=py"None", end_column=py"None")
