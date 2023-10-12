@@ -4,7 +4,6 @@ using Printf
 using Statistics
 using BenchmarkTools
 using Profile
-using Debugger
 using Base: @propagate_inbounds
 using MacroTools
 using OffsetArrays

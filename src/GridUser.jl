@@ -1,6 +1,8 @@
 
 include("GridTools.jl")
 using .GridTools
+using OffsetArrays
+using Debugger
 
 # include("AtlasMesh.jl")
 # include("Advection.jl")
@@ -8,8 +10,6 @@ using .GridTools
 # include("Metric.jl")
 # include("AdvectionTest.jl")
 include("GT2PY.jl")
-
-using OffsetArrays
 
 Cell_ = Dimension{:Cell_, HORIZONTAL}
 K_ = Dimension{:K_, HORIZONTAL}
@@ -88,21 +88,21 @@ expr_abitharder = :(function hello(x::Field{<:AbstractFloat, 1, Tuple{Vertex_}},
     return x .+ sum(E2C), x
 end)
 
-expr = :(function hello(f::Field{Float64, 1, Tuple{Cell_}})
-           tmp = f
-           f = tmp
-           tmp2 = f
-           return tmp2
-       end)  
+expr = :(function hello(f::Field{Float64, 1, Tuple{Cell_}}, g::Field{Float64, 1, Tuple{Cell_}})::Field{Float64, 1, Tuple{Cell_}}
+            tmp = f
+            if 1. .< 10.0
+                tmp = f .+ 1
+                tmp = tmp .+ 10
+            elseif 10 < 20
+                tmp = f .- 1
+            else
+                tmp = tmp .* 10
+                tmp = tmp .+ 10
+                tmp = tmp .+ 100
+            end
+            return tmp
+       end)
 
-expr = :(function hello(f::Field{Float64, 1, Tuple{Cell_}})
-       tmp = f .- 1
-       a = 2 + tmp
-       a = a + tmp
-       tmp = a + tmp .+ f
-       tmp = 3 + a
-       return tmp + a
-   end)
 
 # jast_to_foast(expr)
 

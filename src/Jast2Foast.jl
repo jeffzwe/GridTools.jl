@@ -25,7 +25,15 @@ scalar_types = Dict(
 # -----------------------------------------------------------------------------------------------------------------------------
 # visit() instances
 
-# TODO maybe? vcat, hcat, a.dims, 
+# TODO maybe? vcat, hcat, a.dims, casting
+
+function foast_transfrom_jast(expr::Expr, closure_vars::Dict)
+    return visit_(Val{:function}(), expr.args, closure_vars)
+end
+
+function visit(expr::Expr, loc=nothing)
+   return visit_(Val{expr.head}(), expr.args, loc)
+end
 
 function visit(sym::Symbol, loc)
     return foast.Name(id=string(sym), location=loc)
@@ -35,15 +43,8 @@ function visit(sym::Symbol)
     return visit_(Val{sym}())
 end
 
-function visit(expr::Expr, loc=nothing)
-   return visit_(Val{expr.head}(), expr.args, loc)
-end
 
-function visit(expr::Expr, closure_vars::Dict)
-    return visit_(Val{:function}(), expr.args, closure_vars)
-end
-
-function visit(constant::Any, loc=nothing)
+function visit(constant::Any, loc)
     type_ = type_translation.from_value(constant)
 
     return foast.Constant(
@@ -226,12 +227,23 @@ function visit_(sym::Val{:(.)}, args::Array, outer_loc)
 end
 
 function visit_(sym::Val{:if}, args::Array, outer_loc)
-    return foast.IfStmt(
-        condition= args[1].head != :block ? visit(args[1], outer_loc) : visit(args[1].args[2], get_location(args[1].args[1])),       # in elseif the condition is always a block. gt4py does not accept blocks in the condition
-        true_branch=visit(args[2], outer_loc),
-        false_branch = length(args) == 3 ? visit(args[3], outer_loc) : foast.BlockStmt(stmts=[], location=outer_loc),
-        location = outer_loc
-    )
+    
+    if is_ternary_stmt(args)
+        return foast.TernaryExpr(
+            condition=visit(args[1], outer_loc),
+            true_expr=visit(args[2], outer_loc),
+            false_expr=visit(args[3], outer_loc),
+            location=outer_loc,
+            type=ts.DeferredType(constraint=ts.DataType),
+        )
+    else
+        return foast.IfStmt(
+            condition= args[1].head != :block ? visit(args[1], outer_loc) : visit(args[1].args[2], get_location(args[1].args[1])),       # in elseif the condition is always a block. gt4py does not accept blocks in the condition
+            true_branch=visit(args[2], outer_loc),
+            false_branch = length(args) == 3 ? visit(args[3], outer_loc) : foast.BlockStmt(stmts=[], location=outer_loc),
+            location = outer_loc
+        )
+    end
 end
 
 function visit_(sym::Val{:elseif}, args::Array, outer_loc)
@@ -303,22 +315,24 @@ function visit_(sym::Val{:tuple}, args::Array, outer_loc)
     )
 end
 
-function visit_(sym::Val{:&&}, args::Array, outer_loc)
-    return foast.BinOp(
-            op=visit(:(&)),
-            left=visit(args[1], outer_loc),
-            right=visit(args[2], outer_loc),
-            location=outer_loc
-        )
+function visit_(sym::Union{Val{:&&},Val{:.&&}}, args::Array, outer_loc)
+    throw("Unsupported Python feature")
+    # return foast.BinOp(
+    #         op=visit(:(&)),
+    #         left=visit(args[1], outer_loc),
+    #         right=visit(args[2], outer_loc),
+    #         location=outer_loc
+    #     )
 end
 
-function visit_(sym::Val{:||}, args::Array, outer_loc)
-    return foast.BinOp(
-            op=visit(:(|)),
-            left=visit(args[1], outer_loc),
-            right=visit(args[2], outer_loc),
-            location=outer_loc
-        )
+function visit_(sym::Union{Val{:||}, Val{:.||}}, args::Array, outer_loc)
+    throw("Unsupported Python feature")
+    # return foast.BinOp(
+    #         op=visit(:(|)),
+    #         left=visit(args[1], outer_loc),
+    #         right=visit(args[2], outer_loc),
+    #         location=outer_loc
+    #     )
 end
 
 function visit_(sym::Val{:return}, args::Array, outer_loc)
@@ -350,7 +364,21 @@ end
 # ----------------------------------------------------------------------------------------------------------------------------------
 # Helper functions
 
-
+function is_ternary_stmt(args::Array)
+    if length(args) == 3
+        if typeof(args[2]) == Expr && typeof(args[3]) == Expr
+            if args[2].head == :block && args[3].head == :block
+                return false
+            else
+                return true
+            end
+        else
+            return true
+        end
+    else
+        return false
+    end
+end
 
 function get_location(linenuno::LineNumberNode)
     return SourceLocation(string(linenuno.file), linenuno.line, 1, end_line=py"None", end_column=py"None")
@@ -360,7 +388,7 @@ end
 function from_type_hint(sym::Symbol)
     if typeof(eval(sym)) == DataType
         try
-            return ts.ScalarType(scalar_types[sym])
+            return ts.ScalarType(kind=scalar_types[sym])
         catch
             throw("Non-trivial dtypes like $(sym) are not yet supported")
         end
@@ -390,8 +418,7 @@ function from_type_hint(expr::Expr)
             end
             push!(dim, gtx.common.Dimension(string(d), kind=kind))
         end
-        @bp
 
-        return ts.FieldType(dims=dim, dtype=scalar_types[dtype]) 
+        return ts.FieldType(dims=dim, dtype=ts.ScalarType(kind=scalar_types[dtype])) 
     end
 end
