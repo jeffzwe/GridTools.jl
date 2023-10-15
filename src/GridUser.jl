@@ -92,9 +92,28 @@ expr = :(function hello(f::Field{Float64, 1, Tuple{Cell_}}, g::Field{Float64, 1,
             tmp = f
             if 1. .< 10.0
                 tmp = f .+ 1
+                if 30 > 5
+                    tmp = tmp .+ 20
+                    tmp = tmp ./ 10
+                elseif 40 < 4
+                    tmp = tmp .- 3
+                else 
+                    tmp = tmp .* 5
+                end
                 tmp = tmp .+ 10
             elseif 10 < 20
                 tmp = f .- 1
+                if 30 > 5
+                    tmp = tmp .+ 20
+                    tmp = tmp ./ 10
+                    tmp = tmp .- 30
+                    tmp = tmp .+ 3
+                    tmp = tmp .+ 50
+                elseif 40 < 4
+                    tmp = tmp .- 3
+                else 
+                    tmp = tmp .* 5
+                end
             else
                 tmp = tmp .* 10
                 tmp = tmp .+ 10
@@ -102,6 +121,29 @@ expr = :(function hello(f::Field{Float64, 1, Tuple{Cell_}}, g::Field{Float64, 1,
             end
             return tmp
        end)
+
+expr = :(function hello(f::Field{Float64, 1, Tuple{Cell_}}, g::Field{Float64, 1, Tuple{Cell_}})::Field{Float64, 1, Tuple{Cell_}}
+                tmp = f
+                if 1. .< 10.0
+                    tmp = f .+ 1
+                    if 30 > 5
+                        tmp = tmp .+ 20
+                        tmp = tmp ./ 10
+                    elseif 40 < 4
+                        tmp = true ? tmp : begin tmp = tmp.- 4; tmp .- 100 end 
+                    else 
+                        tmp = tmp .* 5
+                    end
+                    tmp = tmp .+ 10
+                elseif 10 < 20
+                    tmp = f .- 1
+                else
+                    tmp = tmp .* 10
+                    tmp = tmp .+ 10
+                    tmp = tmp .+ 100
+                end
+                return tmp
+            end)
 
 
 # jast_to_foast(expr)
