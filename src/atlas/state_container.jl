@@ -8,7 +8,7 @@ struct StateContainer
     }
 end
 
-function St_from_mesh(mesh::AtlasMesh)
+function SC_from_mesh(mesh::AtlasMesh)
     vertex_dim = getfield(mesh, Symbol(DIMENSION_TO_SIZE_ATTR[Vertex]))
     k_dim = getfield(mesh, Symbol(DIMENSION_TO_SIZE_ATTR[K]))
     return StateContainer(

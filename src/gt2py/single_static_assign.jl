@@ -44,13 +44,15 @@ function s_visit(sym::Val{:(=)}, args::Array, assignment_tracker::Dict{Symbol, I
     return Expr(typeof(sym).parameters[1], args...)
 end
 
+function s_visit(sym::Val{:block}, args::Array, assignment_tracker::Dict{Symbol, Integer})
+    return Expr(typeof(sym).parameters[1], map(x -> s_visit(x, assignment_tracker), args)...)
+end
+
 function s_visit(sym::Any, args::Array, assignment_tracker::Dict{Symbol, Integer})
     return Expr(typeof(sym).parameters[1], map(x -> s_visit(x, assignment_tracker), args)...)
 end
 
 function s_visit(sym::Union{Val{:if}, Val{:elseif}}, args::Array, assignment_tracker::Dict{Symbol, Integer})
-
-    @bp
     
     args[1] = s_visit(args[1], assignment_tracker)
     assignment_tracker_true = copy(assignment_tracker)
@@ -70,7 +72,6 @@ function s_visit(sym::Union{Val{:if}, Val{:elseif}}, args::Array, assignment_tra
     return Expr(typeof(sym).parameters[1], args...)
 end
 
-# TODO handle cases where if or else are not Expressions aka TernaryExpr
 function combine_variable_states(true_expr::Union{Expr, Symbol}, false_expr::Union{Expr, Symbol}, assignment_tracker_true::Dict{Symbol, Integer}, assignment_tracker_false::Dict{Symbol, Integer})
     if assignment_tracker_true == assignment_tracker_false
         return true_expr, false_expr, assignment_tracker_true
@@ -98,24 +99,17 @@ function combine_variable_states(true_expr::Union{Expr, Symbol}, false_expr::Uni
     return switch ? (false_expr, true_expr, assignment_tracker_comb) : (true_expr, false_expr, assignment_tracker_comb)
 end
 
-
 function update_false_expr(false_expr::Expr, location::Symbol, value::Symbol)
     if false_expr.head == :block
-        return Expr(:block, [false_expr.args..., :($location = $value)]...)
+        return Expr(:block, [false_expr.args..., false_expr.args[end-1], :($location = $value)]...)
     elseif false_expr.head == :elseif 
         return Expr(:elseif, false_expr.args[1], map(x -> update_false_expr(x, location, value), false_expr.args[2:end])...)
     else
-        return Expr(:block, [false_expr, :($location = $value)]...)
+        throw("Jeff doesnt think one can land here... Please report")   #TODO please varify
     end
 end
 
-update_false_expr(false_expr::Symbol, location::Symbol, value::Symbol) = Expr(:block, [false_expr, :($location = $value)]...)
+update_false_expr(false_expr::Symbol, location::Symbol, value::Symbol) = false_expr
 
-
-function generate_unique_name(name::Symbol, value::Integer)
-    return Symbol("$(name)ᐞ$(value)")
-end
-
-
-
+generate_unique_name(name::Symbol, value::Integer) = Symbol("$(name)ᐞ$(value)")
 

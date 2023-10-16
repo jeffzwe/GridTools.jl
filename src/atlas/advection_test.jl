@@ -23,8 +23,8 @@ level_indices = Field(K, zeros(Int, k_dim))
 level_indices.data .= collect(0:29)
 
 
-state = St_from_mesh(mesh)
-state_next = St_from_mesh(mesh)
+state = SC_from_mesh(mesh)
+state_next = SC_from_mesh(mesh)
 
 tmp_fields = Dict{String, Field}()
 for i in 1:6

@@ -2,8 +2,6 @@ ENV["PYCALL_JL_RUNTIME_PYTHON"] = Sys.which("python3.10")
 
 using PyCall
 
-# import .GridTools: Dimension, Field, Connectivity
-
 atlas = pyimport("atlas4py")
 py"""
 from atlas4py import (
