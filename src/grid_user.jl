@@ -3,7 +3,9 @@ using OffsetArrays
 include("embedded/grid_tools.jl")
 using .GridTools
 
-include("gt2py/gt_to_py.jl")
+using Debugger
+
+include("gt2py/gt2py.jl")
 
 Cell_ = Dimension{:Cell_, HORIZONTAL}
 K_ = Dimension{:K_, HORIZONTAL}
@@ -75,13 +77,6 @@ offset_provider = Dict{String, Connectivity}(
                    "C2E" => C2E_offset_provider
                 )
 
-expr_abitharder = :(function hello(x::Field{<:AbstractFloat, 1, Tuple{Vertex_}}, z::Tuple{Integer, String}; y::Field, yy::Integer)
-
-    a = x[2]
-
-    return x .+ sum(E2C), x
-end)
-
 expr = :(function hello(f::Field{Int32, 1, Tuple{Cell_}}, g::Field{Int32, 1, Tuple{Cell_}})::Field{Int32, 1, Tuple{Cell_}}
                 tmp = f
                 if 1. .< 10.0
@@ -105,11 +100,69 @@ expr = :(function hello(f::Field{Int32, 1, Tuple{Cell_}}, g::Field{Int32, 1, Tup
                 return tmp
             end)
 
-py_field_operator(expr)
+expr = :(function addition(f::Field{Int32, 1, Tuple{Cell_}}, g::Field{Int32, 1, Tuple{Cell_}})::Field{Int32, 1, Tuple{Cell_}}
+            return f .+ g
+        end)
+
+# ------------------------------------------------
+
+# a = Field(Cell, [5., 6., 7., 8., 3., 4., 5., 7., 4., 3., 2., 4., 6., 7., 5., 3., 2., 2., 5.])
+# out = Field(Cell, zeros(Float64, 19))
+
+# @field_operator function arithmetic_test(a::Field{Float64, 1, Tuple{Cell_}})
+#     return a .+ 10. ./ 2.
+#     end
+
+# res = arithmetic_test(b, backend = "py", out = out)
+
+# # ------------------------------------------------
+
+# a = Field(Cell, Int32[1, 2, 3, 4])
+# b = Field(Cell, Int32[5, 6, 7, 8])
+# out = Field(Cell, zeros(Int32, 4))
+
+# @field_operator function arithmetic_test(a::Field{Int32, 1, Tuple{Cell_}}, b::Field{Int32, 1, Tuple{Cell_}})
+#     return a .+ b
+#     end
+
+# res = arithmetic_test(a, b, backend = "py", out = out)
+
+# # ------------------------------------------------
+
+# a = Field(Cell, [5., 6., 7., 8., 3., 4., 5., 7., 4., 3., 2., 4., 6., 7., 5., 3., 2., 2., 5.])
+# out = Field(Edge, zeros(Float64, 12))
+
+# @field_operator function remapping_test(b::Field{Float64, 1, Tuple{Cell_}})
+#     return b(E2C[1])
+#     end
+
+# res = remapping_test(b, offset_provider=offset_provider, backend = "py", out = out)
+
+# # ------------------------------------------------
+
+# out = Field(Edge, zeros(Float64, 12))
+# b = Field(Cell, [5., 6., 7., 8., 3., 4., 5., 7., 4., 3., 2., 4., 6., 7., 5., 3., 2., 2., 5.])
+    
+# @field_operator function neighbor_sum_test(b::Field{Float64, 1, Tuple{Cell_}})
+#     return neighbor_sum(b(E2C), axis=E2CDim)
+#     end
+
+# res = neighbor_sum_test(b, offset_provider=offset_provider, backend = "py", out = out)
+
+# ------------------------------------------------
+
+# a = Field((Cell, K), reshape(collect(-3.0:8.0), (6, 2)))
+# b = Field((Cell, K), fill(-10., (6, 2)))
+# mask = Field((Cell, K), rand(Bool, (6, 2)))
+# out = Field((Cell, K), zeros(6, 2))
+
+# @field_operator function where_test(mask::Field{Bool, 2, Tuple{Cell_, K_}}, a::Field{Float64, 2, Tuple{Cell_, K_}}, b::Field{Float64, 2, Tuple{Cell_, K_}})
+#         return where(mask, a, b)
+#         end
+
+# res = where_test(mask, a, b, backend = "py", out = out)
 
 
-
-
-
+# ------------------------------------------------
 
 

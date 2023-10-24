@@ -1,6 +1,6 @@
 
 
-# TODO maybe? vcat, hcat, a.dims, casting
+# TODO maybe? vcat, hcat, a.dims
 # TODO if not allowed, add these to a list where an error is thrown when used
 
 # TODO add checks and asserts for jast_structure
@@ -25,13 +25,17 @@ end
 
 # Catches Integers, Floats, Bool, Strings, etc. otherwise throws error
 function visit(constant::Any, loc)
-    type_ = type_translation.from_value(constant)
+    try
+        type_ = type_translation.from_value(constant)
 
-    return foast.Constant(
+        return foast.Constant(
         value=constant,
         location=loc,
         type=type_,
-    )
+        )
+    catch e
+        throw("Constants of type $(typeof(constant)) are not permitted")
+    end
 end
 
 function _builtin_type_constructor_symbols(captured_vars, loc)::Tuple
@@ -225,6 +229,18 @@ function visit_(sym::Val{:tuple}, args::Array, outer_loc)
     )
 end
 
+function visit_(sym::Val{:.}, args::Array, outer_loc)
+    if typeof(args[2]) == QuoteNode
+        # TODO only allowed with frozen name spaces? Ask Till
+        return foast.Attribute(value=visit(args[1], outer_loc), attr=string(args[2]), location=outer_loc)
+    elseif typeof(args[2]) == Expr  # we have a function broadcast
+        args[2] = args[2].args      # arguments to . call are wrapped in a tuple expression TODO verify
+        return visit_(Val{:call}(), args, outer_loc)
+    else
+        throw("We shouldn't land here... Report") # TODO verify
+    end
+end
+
 function visit_(sym::Val{:call}, args::Array, outer_loc)
     if args[1] in bin_op
         return foast.BinOp(
@@ -246,6 +262,8 @@ function visit_(sym::Val{:call}, args::Array, outer_loc)
             right=visit(args[3], outer_loc),
             location=outer_loc
         )
+    elseif args[1] in disallowed_op
+        throw("The function $(args[1]) is currently not supported by gt4py.")
     else
         return foast.Call(
             func=visit(args[1], outer_loc),
@@ -292,12 +310,6 @@ function visit_(sym::Val{:(/=)}, args::Array, outer_loc)
     return visit(:($(args[1]) = $(args[1]) / $(args[2])), outer_loc)
 end
 
-function visit_(sym::Val{:(.)}, args::Array, outer_loc)
-    return foast.Attribute(
-        value=visit(args[1], outer_loc), attr=string(args[2]), location=outer_loc
-    )
-end
-
 function visit_(sym::Val{:ref}, args::Array, outer_loc)
     if typeof(args[2]) <: Integer
         return foast.Subscript(
@@ -321,7 +333,7 @@ function visit_(sym::Val{:return}, args::Array, outer_loc)
 end
 
 function visit_(sym::Val{:comparison}, args::Array, outer_loc)
-    throw("All compairs should have been eliminated in the preprocessing step. Somethings not right") #TODO
+    throw("All compairs should have been eliminated in the preprocessing step. Please report") #TODO
 end
 
 function visit_(sym::Union{Val{:&&},Val{:.&&}}, args::Array, outer_loc)
@@ -396,14 +408,14 @@ function from_type_hint(expr::Expr)
         (dtype, ndims, dims) = param_type[2:end]
 
         for d in dims.args[2:end]
-            if eval(d) <: Dimension{<:Any, HORIZONTAL}
+            if Core.eval(CURRENT_MODULE, d) <: Dimension{<:Any, HORIZONTAL}
                 kind = gtx.common.DimensionKind."HORIZONTAL"
-            elseif eval(d) <: Dimension{<:Any, VERTICAL}
+            elseif Core.eval(CURRENT_MODULE, d) <: Dimension{<:Any, VERTICAL}
                 kind = gtx.common.DimensionKind."VERTICAL"
             else
                 kind = gtx.common.DimensionKind."LOCAL"
             end
-            push!(dim, gtx.common.Dimension(string(d), kind=kind))
+            push!(dim, gtx.common.Dimension(string(d)[1:end-1], kind=kind))     #TODO only works if we have strict naming sceme in julia
         end
 
         return ts.FieldType(dims=dim, dtype=ts.ScalarType(kind=scalar_types[dtype])) 

@@ -72,7 +72,7 @@ function get_j_cvars(expr::Expr)
 
     # update dictionary
     for name in closure_names
-        closure_vars[name] = eval(name)
+        closure_vars[name] = Core.eval(CURRENT_MODULE, name)
     end
 
     return closure_vars 
@@ -84,15 +84,15 @@ function translate_cvars(j_closure_vars::Dict)
     for (key, value) in j_closure_vars
         new_value = nothing
         if typeof(value) == FieldOffset
-            py_source = map(dim -> gtx.Dimension(get_dim_name(dim), kind=py_dim_kind[get_dim_kind(dim)]), value.source)
-            py_target = map(dim -> gtx.Dimension(get_dim_name(dim), kind=py_dim_kind[get_dim_kind(dim)]), value.target)
+            py_source = map(dim -> gtx.Dimension(string(get_dim_name(dim))[1:end-1], kind=py_dim_kind[get_dim_kind(dim)]), value.source)
+            py_target = map(dim -> gtx.Dimension(string(get_dim_name(dim))[1:end-1], kind=py_dim_kind[get_dim_kind(dim)]), value.target)
             new_value = gtx.FieldOffset(
                 value.name, 
                 source= length(py_source) == 1 ? py_source[1] : py_source, 
                 target= length(py_target) == 1 ? py_target[1] : py_target
             )
         elseif typeof(value) <: Dimension
-            new_value = gtx.Dimension(get_dim_name(value), kind=py_dim_kind[get_dim_kind(value)])
+            new_value = gtx.Dimension(string(get_dim_name(value))[1:end-1], kind=py_dim_kind[get_dim_kind(value)])
 
         elseif typeof(value) <: Function
             if key in keys(builtin_op)
@@ -100,7 +100,7 @@ function translate_cvars(j_closure_vars::Dict)
             elseif key in keys(GridTools.py_field_ops)
                 new_value = GridTools.py_field_ops[key]
             end
-        elseif isconst(@__MODULE__, Symbol(value))
+        elseif isconst(CURRENT_MODULE, Symbol(value))
             # TODO create FrozenNameSpace...
             new_value = "Constant"
         else 

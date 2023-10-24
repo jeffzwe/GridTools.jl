@@ -7,6 +7,7 @@ using MacroTools
 using MacroTools: prewalk, postwalk
 
 gtx = pyimport("gt4py.next")
+np = pyimport("numpy")
 
 func_to_foast = gtx.ffront.func_to_foast
 foast = gtx.ffront.field_operator_ast
@@ -21,6 +22,8 @@ DeadClosureVarElimination = gtx.ffront.foast_passes.dead_closure_var_elimination
 UnpackedAssignPass = gtx.ffront.foast_passes.iterable_unpack.UnpackedAssignPass
 FieldOperatorTypeDeduction = gtx.ffront.foast_passes.type_deduction.FieldOperatorTypeDeduction
 FieldOperater = gtx.ffront.decorator.FieldOperator
+roundtrip = gtx.program_processors.runners.roundtrip
+
 
 concepts = pyimport("gt4py.eve.concepts")
 SourceLocation = concepts.SourceLocation
@@ -65,7 +68,7 @@ py_dim_kind = Dict(
 builtin_op = Dict(
     :max_over => gtx.max_over, 
     :min_over => gtx.min_over, 
-    :broadcast => gtx.broadcast,
+    :(GridTools.broadcast) => gtx.broadcast,
     :where => gtx.where,
     :neighbor_sum => gtx.neighbor_sum,
     :astype => gtx.astype,
@@ -98,10 +101,29 @@ builtin_op = Dict(
     :max => gtx.maximum
 )
 
+disallowed_op = Set([
+    :convert
+])
+
+np_types = Dict(
+    :Bool => np.bool_,
+    :Int32 => np.int32,
+    :Int64 => np.int64,
+    :Integer => np.int64,
+    :Float32 => np.float32,
+    :Float64 => np.float64,
+    :AbstractFloat => np.float64,
+)
+
+CURRENT_MODULE = nothing
+
 
 # Methods -----------------------------------------------------------------------------------
 
-function py_field_operator(function_definition::Expr, backend = py"None", grid_type = py"None", operator_attributes = Dict())
+function py_field_operator(function_definition::Expr, module_::Module, backend = roundtrip.executor, grid_type = py"None"o, operator_attributes = Dict())
+
+    global CURRENT_MODULE = module_
+
     foast_definition_node, closure_vars = jast_to_foast(function_definition)
     loc = foast_definition_node.location
 
@@ -110,23 +132,19 @@ function py_field_operator(function_definition::Expr, backend = py"None", grid_t
         for (key, value) in operator_attributes
     )
 
-    py"""
     untyped_foast_node = foast.FieldOperator(
-        id=$(foast_definition_node.id),
-        definition=$(foast_definition_node),
-        location=$loc,
-        **$(operator_attribute_nodes),
+        id=(foast_definition_node.id),
+        definition=(foast_definition_node),
+        location=loc
+        ;operator_attribute_nodes...
     )
-    """
-
-    untyped_foast_node = py"untyped_foast_node"
 
     foast_node = FieldOperatorTypeDeduction.apply(untyped_foast_node)
 
     return FieldOperater(
             foast_node=foast_node,
             closure_vars=closure_vars,
-            definition=py"None",
+            definition=py"None"o,
             backend=backend,
             grid_type=grid_type,
         )
@@ -134,11 +152,8 @@ end
 
 function jast_to_foast(expr::Expr)
     expr, closure_vars, annotations = preprocess_definiton(expr)
-
     foast_node = visit_jast(expr, closure_vars)
-
     foast_node = postprocess_definition(foast_node, closure_vars, annotations)
-
     return foast_node, closure_vars
 end
 
@@ -167,4 +182,55 @@ function postprocess_definition(foast_node, closure_vars, annotations)
 end
 
 
+
+function py_args(args::Tuple)
+    out_args = []
+
+    for i in args
+        push!(out_args, convert_type(i))
+    end
+
+    return out_args
+end
+
+function py_args(args::Union{Base.Pairs, Dict})
+    out_args = Dict()
+
+    for i in args
+        out_args[i.first] = convert_type(i.second)
+    end
+
+    return out_args
+end
+py_args(arg) = convert_type(arg)
+
+function convert_type(a)
+    if typeof(a) <: Field
+        dims = []
+
+        for dim in a.broadcast_dims
+            if get_dim_kind(dim) == HORIZONTAL
+                kind = gtx.DimensionKind.HORIZONTAL
+            elseif get_dim_kind(dim) == VERTICAL
+                kind = gtx.DimensionKind.VERTICAL
+            else
+                kind = gtx.DimensionKind.LOCAL
+            end
+            push!(dims, gtx.Dimension(string(get_dim_name(dim))[1:end-1]))      #TODO this requires strict naming rules for dimensions... not sure if we want that
+        end
+        return gtx.np_as_located_field(Tuple(dims)...)(np.asarray(a.data))      #TODO a.data gets passed as a list, not as a numpy array as stated in documentation of PyCall
+    elseif typeof(a) <: Connectivity
+    
+        kind = py_dim_kind[(get_dim_kind(a.source))]
+        source_dim  = gtx.Dimension(string(get_dim_name(a.source))[1:end-1], kind=kind)
+        
+        kind = py_dim_kind[(get_dim_kind(a.target))]
+        target_dim = gtx.Dimension(string(get_dim_name(a.target))[1:end-1], kind=kind)
+
+        return gtx.NeighborTableOffsetProvider(np.asarray(a.data .- 1), target_dim, source_dim, a.dims)      #TODO a.data gets passed as a list, not as a numpy array as stated in documentation of PyCall
+    else 
+        @assert Symbol(typeof(a)) in keys(scalar_types) ("The type of argument $(a) is not a valid argument type to a field operator")
+        return a
+    end
+end
 

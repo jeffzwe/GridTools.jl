@@ -8,6 +8,7 @@ using Base: @propagate_inbounds
 using MacroTools
 using OffsetArrays
 using OffsetArrays: IdOffsetRange
+using Debugger
 
 import Base.Broadcast: Extruded, Style, BroadcastStyle, ArrayStyle ,Broadcasted
 
@@ -135,9 +136,9 @@ function (field_call::Field)(f_off::FieldOffset, ind::Union{<:Integer, Nothing} 
     @assert all(x -> x in f_off.source, conn.source) && all(x -> x in f_off.target, conn.target)
 
     if ndims(field_call) == 1
-        res = map(x -> x == 0. ? 0. : getindex(field_call, Int.(x)), conn_data)
+        res = map(x -> x == 0 ? convert(eltype(field_call), 0) : getindex(field_call, Int.(x)), conn_data)
     else
-        f(slice) = map(x -> x == 0. ? 0. : getindex(slice, Int.(x)), conn_data)
+        f(slice) = map(x -> x == 0 ? convert(eltype(field_call), 0) : getindex(slice, Int.(x)), conn_data)
         res = cat(map(f, eachslice(field_call.data, dims=2))...,dims=ndims(conn_data)+1)
     end
 
@@ -192,20 +193,15 @@ julia> new_connectivity = Connectivity(fill(1, (3,2)), Cell, (Edge, E2C), 2)
 """
 struct Connectivity
     data::Array{Integer, 2}
-    source::Tuple{Vararg{<:Dimension}}
-    target::Tuple{Vararg{<:Dimension}}
+    source::Dimension
+    target::Dimension
     dims::Integer
-
-    function Connectivity(data::Array{<:Integer, 2},source::Union{Dimension, Tuple{Vararg{<:Dimension}}}, target::Union{Dimension, Tuple{Vararg{<:Dimension}}}, dims::Integer)
-        return new(data, Tuple(source), Tuple(target), dims)
-    end
 end
-
 
 # OFFSET_PROVIDER  -----------------------------------------------------------------------------------
 OFFSET_PROVIDER::Dict{String, Connectivity} = Dict{String, Connectivity}()
 
-assign_op(dict::Nothing) = nothing
+# assign_op(dict::Nothing) = nothing
 function assign_op(dict::Dict{String, Connectivity})
     global OFFSET_PROVIDER = dict
 end
@@ -221,27 +217,44 @@ py_field_ops = Dict()
 """
     @field_operator
 
-The field_operator macro takes a function definition and creates a run environment for the function call within the GridTools package. It enables the additional argument "offset_provider" etc.
+The field_operator macro takes a function definition and creates a run environment for the function call within the GridTools package. It enables the additional argument "offset_provider", "backend", etc.
 
 # Examples
 ```julia-repl
-julia> @field_operator hello(x) = x + x
-hello (generic function with 1 method)
+julia> @field_operator addition(x) = x + x
+addition (generic function with 1 method)
 ...
 ```
 """
 macro field_operator(expr::Expr)
     
-    wrap = :(function wrapper(args...; offset_provider::Union{Dict{String, Connectivity}, Nothing} = nothing, kwargs...)
+    wrap = :(function wrapper(args...; offset_provider::Dict{String, Connectivity} = Dict{String, Connectivity}(), backend::String = "embedded", out = nothing, kwargs...)
         @assert isempty(GridTools.OFFSET_PROVIDER)
-        GridTools.assign_op(offset_provider)
-        f = $(esc(expr))
-        try
-            result = f(args...; kwargs...)
-            return result
-        finally
-            GridTools.unassign_op()
+
+        result = nothing
+
+        @bp
+
+        if backend == "embedded"
+            GridTools.assign_op(offset_provider)
+            try
+                f = $(esc(expr))
+                result = f(args...; kwargs...)
+            finally
+                GridTools.unassign_op()
+            end
+        elseif backend == "py"
+            f = py_field_operator($(Expr(:quote, expr)), @__MODULE__)
+            p_args = py_args(args)
+            p_kwargs = py_args(kwargs)
+            p_out = py_args(out)
+            p_offset_provider = py_args(offset_provider)
+            f(p_args..., out = p_out, offset_provider = p_offset_provider; p_kwargs...)
+            result = p_out
+        else 
+            throw("The backend option you provided is not available")
         end
+        return result
     end)
 
     # field_ops[namify(expr)] = FieldOperator object # TODO
@@ -331,6 +344,7 @@ where(mask::Field, t1::Tuple, t2::Tuple)::Field = map(x -> where(mask, x[1], x[2
 # Includes ------------------------------------------------------------------------------------
 
 include("cust_broadcast.jl")
+include("../gt2py/gt2py.jl")
 
 end
 
