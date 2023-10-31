@@ -38,11 +38,6 @@ end
         ind_B = findfirst(x -> x == dim, B.dims)
 
         if dim in A.dims && dim in B.dims && !isempty(A.axes) && !isempty(B.axes)
-            ###### old
-            # @assert length(A[2][ind_A]) == length(B[2][ind_B])      # TODO: Take this out if the lengths should always be concatinated
-            # push!(out_size, A[2][ind_A])
-            ######
-
             if f == ifelse # union
                 push!(out_size, A.axes[ind_A])
             else # intersection

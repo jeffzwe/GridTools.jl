@@ -50,6 +50,7 @@ scalar_types = Dict(
     :Bool => ts.ScalarKind."BOOL",
     :Int32 => ts.ScalarKind."INT32",
     :Int64 => ts.ScalarKind."INT64",
+    :Int => ts.ScalarKind."INT64",
     :Integer => ts.ScalarKind."INT64",
     :(<:Integer) => ts.ScalarKind."INT64",
     :Float32 => ts.ScalarKind."FLOAT32",
@@ -57,6 +58,17 @@ scalar_types = Dict(
     :AbstractFloat => ts.ScalarKind."FLOAT64",
     :(<:AbstractFloat) => ts.ScalarKind."FLOAT64",
     :String => ts.ScalarKind."STRING"
+)
+
+py_scalar_types = Dict(
+    Bool => py"bool",
+    Int32 => np.int32,
+    Int64 => np.int64,
+    Int => np.int64,
+    Integer => np.int64,
+    Float32 => np.float32,
+    Float64 => np.float64,
+    AbstractFloat => np.float64,
 )
 
 py_dim_kind = Dict(
@@ -68,10 +80,10 @@ py_dim_kind = Dict(
 builtin_op = Dict(
     :max_over => gtx.max_over, 
     :min_over => gtx.min_over, 
-    :(GridTools.broadcast) => gtx.broadcast,
+    :broadcast => gtx.broadcast,
     :where => gtx.where,
     :neighbor_sum => gtx.neighbor_sum,
-    :astype => gtx.astype,
+    :convert => gtx.astype,
     :as_offset => gtx.as_offset,
     :sin => gtx.sin,
     :cos => gtx.cos,
@@ -101,19 +113,9 @@ builtin_op = Dict(
     :max => gtx.maximum
 )
 
-disallowed_op = Set([
-    :convert
-])
 
-np_types = Dict(
-    :Bool => np.bool_,
-    :Int32 => np.int32,
-    :Int64 => np.int64,
-    :Integer => np.int64,
-    :Float32 => np.float32,
-    :Float64 => np.float64,
-    :AbstractFloat => np.float64,
-)
+
+disallowed_op = Set([])
 
 CURRENT_MODULE = nothing
 
@@ -152,6 +154,7 @@ end
 
 function jast_to_foast(expr::Expr)
     expr, closure_vars, annotations = preprocess_definiton(expr)
+    expr, closure_vars = remove_function_aliases(expr, closure_vars)                                                     # TODO Can be ommited once gt4py allows aliases
     foast_node = visit_jast(expr, closure_vars)
     foast_node = postprocess_definition(foast_node, closure_vars, annotations)
     return foast_node, closure_vars
@@ -170,6 +173,7 @@ function postprocess_definition(foast_node, closure_vars, annotations)
     foast_node = ClosureVarFolding.apply(foast_node, closure_vars)
     foast_node = DeadClosureVarElimination.apply(foast_node)
     foast_node = ClosureVarTypeDeduction.apply(foast_node, closure_vars)
+
     foast_node = FieldOperatorTypeDeduction.apply(foast_node)
     foast_node = UnpackedAssignPass.apply(foast_node)
 
@@ -206,19 +210,21 @@ py_args(arg) = convert_type(arg)
 
 function convert_type(a)
     if typeof(a) <: Field
-        dims = []
 
+        b_dims = []
         for dim in a.broadcast_dims
-            if get_dim_kind(dim) == HORIZONTAL
-                kind = gtx.DimensionKind.HORIZONTAL
-            elseif get_dim_kind(dim) == VERTICAL
-                kind = gtx.DimensionKind.VERTICAL
-            else
-                kind = gtx.DimensionKind.LOCAL
-            end
-            push!(dims, gtx.Dimension(string(get_dim_name(dim))[1:end-1]))      #TODO this requires strict naming rules for dimensions... not sure if we want that
+            kind = py_dim_kind[(get_dim_kind(dim))]
+            push!(b_dims, gtx.Dimension(string(get_dim_name(dim))[1:end-1], kind = kind))      #TODO this requires strict naming rules for dimensions... not sure if we want that
         end
-        return gtx.np_as_located_field(Tuple(dims)...)(np.asarray(a.data))      #TODO a.data gets passed as a list, not as a numpy array as stated in documentation of PyCall
+
+        if ndims(a.data) == length(b_dims)
+            data = a.data
+        else                                                                    # upscale array to new dimensions for gt4py
+            data = upscale_data(a.dims, a.broadcast_dims, a.data)
+        end
+
+        return gtx.np_as_located_field(Tuple(b_dims)...)(np.asarray(data))     #TODO a.data gets passed as a list, not as a numpy array as stated in documentation of PyCall
+
     elseif typeof(a) <: Connectivity
     
         kind = py_dim_kind[(get_dim_kind(a.source))]
@@ -234,3 +240,56 @@ function convert_type(a)
     end
 end
 
+
+function upscale_data(dims::Tuple{Vararg{<:Dimension}}, b_dims::Tuple{Vararg{<:Dimension}}, data::Array)
+
+    out_size = []
+
+    for dim in b_dims
+        if dim in dims
+            ind = findfirst(x -> x == dim, dims) 
+            push!(out_size, size(data)[ind])
+        else
+            push!(out_size, 1)
+        end
+    end
+
+    return reshape(data, Tuple(out_size))
+end
+
+# -------------------------------------------------------------------------
+
+# TODO Can be ommited once gt4py allows aliases
+
+py_aliases = Dict(
+    :convert => :astype,
+    :asin => :arcsin,
+    :acos => :arccos,
+    :atan => :arctan,
+    :asinh => :arcsinh,
+    :acosh => :arccosh,
+    :atanh => :arctanh,
+    :min => :minimum,
+    :max => :maximum
+)
+
+function remove_function_aliases(expr::Expr, closure_vars::Dict)
+
+    expr = postwalk(expr) do x
+        if typeof(x) == Symbol && x in keys(py_aliases)
+            return py_aliases[x]
+        else
+            return x
+        end
+    end
+
+    for (key, value) in closure_vars
+        if Symbol(key) in keys(py_aliases)
+            closure_vars[string(py_aliases[Symbol(key)])] = value
+            delete!(closure_vars, key)
+        end
+    end
+
+    return expr, closure_vars
+
+end

@@ -1,13 +1,13 @@
 
 
-function single_assign_target_pass(expr::Expr)
+function single_assign_target_pass(expr::Expr)::Expr
     return postwalk(expr) do x
         @capture(x, (t1_, t2_ = val1_, val2_) | ((t1_, t2_) = (val1_, val2_)) | (t1_, t2_ = (val1_, val2_)) | ((t1_, t2_) = val1_, val2_)) || return x
         return :($t1 = $val1; $t2 = $val2)
     end
 end
 
-function unchain_compairs_pass(expr::Expr)
+function unchain_compairs_pass(expr::Expr)::Expr
     return postwalk(expr) do x
         if typeof(x) == Expr && x.head == :comparison
             return recursive_unchain(x.args)
@@ -17,7 +17,7 @@ function unchain_compairs_pass(expr::Expr)
     end
 end
 
-function recursive_unchain(args::Array)
+function recursive_unchain(args::Array)::Expr
     if length(args) == 3
         return Expr(:call, args[2], args[1], args[3])  # Alternative syntax: :($(args[2])($(args[1]), $(args[3])))
     else
@@ -25,7 +25,7 @@ function recursive_unchain(args::Array)
     end
 end
 
-function get_annotation(expr::Expr)
+function get_annotation(expr::Expr)::Dict
     out_ann = Dict()
 
     if expr.args[1].head == :(::)
@@ -35,12 +35,12 @@ function get_annotation(expr::Expr)
     return out_ann
 end
 
-function get_closure_vars(expr::Expr)
+function get_closure_vars(expr::Expr)::Dict
     j_closure_vars = get_j_cvars(expr)
     return translate_cvars(j_closure_vars)
 end
 
-function get_j_cvars(expr::Expr)
+function get_j_cvars(expr::Expr)::Dict
 
     expr_def = splitdef(expr)
     @assert all(typeof.(expr_def[:args]) .== Expr) ("Field operator parameters must be type annotated.")
@@ -63,11 +63,16 @@ function get_j_cvars(expr::Expr)
     end
 
     # catch all closure_variables
-    postwalk(expr.args[2]) do x
-        if typeof(x) == Symbol && !(x in local_vars) && !(x in math_ops)
+    prewalk(expr.args[2]) do x
+        if @capture(x, name_(args__)) && !(name in local_vars) && !(name in math_ops)
+            push!(closure_names, name)
+            return Expr(:irgendoeppis, args...)                                         # small present for tehrengruber
+        elseif typeof(x) == Symbol && !(x in local_vars) && !(x in math_ops)
             push!(closure_names, x)
+            return x
+        else 
+            return x
         end
-        return x
     end
 
     # update dictionary
@@ -78,7 +83,7 @@ function get_j_cvars(expr::Expr)
     return closure_vars 
 end
 
-function translate_cvars(j_closure_vars::Dict)
+function translate_cvars(j_closure_vars::Dict)::Dict
     py_cvars = Dict()
 
     for (key, value) in j_closure_vars
@@ -100,6 +105,9 @@ function translate_cvars(j_closure_vars::Dict)
             elseif key in keys(GridTools.py_field_ops)
                 new_value = GridTools.py_field_ops[key]
             end
+        elseif typeof(value) <: DataType      # Not necessary... Filter out DataTypes in the prewalk
+            key = lowercase(string(key))
+            new_value = py_scalar_types[value]
         elseif isconst(CURRENT_MODULE, Symbol(value))
             # TODO create FrozenNameSpace...
             new_value = "Constant"

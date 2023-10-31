@@ -12,7 +12,7 @@ using Debugger
 
 import Base.Broadcast: Extruded, Style, BroadcastStyle, ArrayStyle ,Broadcasted
 
-export Dimension, DimensionKind, HORIZONTAL, VERTICAL, LOCAL, Field, FieldShape, Connectivity, FieldOffset, shape, neighbor_sum, max_over, min_over, where, @field_operator, get_dim_name, get_dim_kind
+export Dimension, DimensionKind, HORIZONTAL, VERTICAL, LOCAL, Field, FieldShape, shape, Connectivity, FieldOffset, neighbor_sum, max_over, min_over, where, @field_operator, get_dim_name, get_dim_kind
 
 
 # Lib ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -158,9 +158,10 @@ end
 # Field struct interfaces
 Base.size(F::Field)::Tuple = size(F.data)
 Base.axes(F::Field)::Tuple = axes(F.data)
+Base.convert(t::Type{T}, F::Field) where {T<:Number} = Field(F.dims, convert.(t, F.data), F.broadcast_dims)
 @propagate_inbounds Base.getindex(F::Field{T,N}, inds::Vararg{Int,N}) where {T,N} = F.data[inds...]
 @propagate_inbounds Base.setindex!(F::Field{T,N}, val, inds::Vararg{Int,N}) where {T,N} = F.data[inds...] = val
-Base.showarg(io::IO, F::Field, toplevel) = print(io, " Field with buffer_dims ", typeof(F.dims), " and broadcasted_dims ", typeof(F.broadcast_dims))
+Base.showarg(io::IO, F::Field, toplevel) = print(io, eltype(F), " Field with dimensions ", get_dim_name.(F.broadcast_dims))
 function Base.promote(f1::Field, f2::Field)
     f1_new_data, f2_new_data = promote(f1.data, f2.data)
     return Field(f1.dims, f1_new_data, f1.broadcast_dims),Field(f2.dims, f2_new_data, f2.broadcast_dims)
@@ -233,8 +234,6 @@ macro field_operator(expr::Expr)
 
         result = nothing
 
-        @bp
-
         if backend == "embedded"
             GridTools.assign_op(offset_provider)
             try
@@ -264,17 +263,26 @@ end
 
 # Built-ins ----------------------------------------------------------------------
 
+# TODO do we want this or not? Works with convert
+# function astype(a::Any, t::Type)
+#     return convert.(t, a)
+# end
+
+# function astype(f::Field, t::Type)
+#     return Field(f.dims, convert.(t, f.data), f.broadcast_dims)
+# end
+
 """
     broadcast(f::Field, b_dims::Tuple)
 
 Sets the broadcast dimension of Field f to b_dims
 """
-function broadcast(f::Field, b_dims::D)::Field where D <: Tuple{Vararg{<:Dimension}}
+function Base.broadcast(f::Field, b_dims::D)::Field where D <: Tuple{Vararg{<:Dimension}}
     @assert issubset(f.dims, b_dims)
     return Field(f.dims, f.data, b_dims)
 end
 
-function broadcast(n::Number, b_dims::D)::Field where D <: Tuple{Vararg{<:Dimension}}
+function Base.broadcast(n::Number, b_dims::D)::Field where D <: Tuple{Vararg{<:Dimension}}
     return Field((), fill(n), b_dims)
 end
 

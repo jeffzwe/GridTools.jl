@@ -1,6 +1,6 @@
 
 
-# TODO maybe? vcat, hcat, a.dims
+# TODO maybe? vcat, hcat, a.dims, convert
 # TODO if not allowed, add these to a list where an error is thrown when used
 
 # TODO add checks and asserts for jast_structure
@@ -15,7 +15,15 @@ function visit(expr::Expr, loc=nothing)
 end
 
 function visit(sym::Symbol, loc)
-    return foast.Name(id=string(sym), location=loc)
+    if sym in keys(scalar_types)
+        return foast.Name(id=lowercase(string(sym)), location=loc)
+    else
+        return foast.Name(id=string(sym), location=loc)
+    end
+end
+
+function visit(sym::String, loc)
+    return foast.Name(id=sym, location=loc)
 end
 
 # Called when Symbol is a Unary, Binary or Compare Operation
@@ -27,6 +35,7 @@ end
 function visit(constant::Any, loc)
     try
         type_ = type_translation.from_value(constant)
+        type_ = type_ == ts.ScalarType(kind=ts.ScalarKind."INT32") ? ts.ScalarType(kind=ts.ScalarKind."INT64") : type_
 
         return foast.Constant(
         value=constant,
@@ -51,7 +60,7 @@ function _builtin_type_constructor_symbols(captured_vars, loc)::Tuple
     captured_type_builtins = Dict(
             name => value
             for (name, value) in captured_vars
-            if py"$name in fbuiltins.TYPE_BUILTIN_NAMES and $value is getattr(fbuiltins, name)"
+            if py"$name in fbuiltins.TYPE_BUILTIN_NAMES and $value is getattr(fbuiltins, $name)"
     )
     py"""
     to_be_inserted = python_type_builtins | $captured_type_builtins
@@ -122,7 +131,7 @@ function visit_(sym::Val{:(::)}, args::Array, outer_loc)
     end
 
     try
-        eval(args)
+        eval(args)      #TODO eval in which scope?
     catch
         throw("Type Error encountered") #TODO throw correct error
     end
@@ -231,10 +240,11 @@ end
 
 function visit_(sym::Val{:.}, args::Array, outer_loc)
     if typeof(args[2]) == QuoteNode
-        # TODO only allowed with frozen name spaces? Ask Till
-        return foast.Attribute(value=visit(args[1], outer_loc), attr=string(args[2]), location=outer_loc)
-    elseif typeof(args[2]) == Expr  # we have a function broadcast
-        args[2] = args[2].args      # arguments to . call are wrapped in a tuple expression TODO verify
+        # return foast.Attribute(value=visit(args[1], outer_loc), attr=string(args[2]), location=outer_loc)             # TODO Frozen namespace
+    elseif typeof(args[2]) == Expr  # we have a function broadcast aka sin.(field)
+        func_args = args[2].args    # arguments to . call are wrapped in a tuple expression TODO verify
+        pop!(args)
+        append!(args, func_args)      
         return visit_(Val{:call}(), args, outer_loc)
     else
         throw("We shouldn't land here... Report") # TODO verify
@@ -265,8 +275,9 @@ function visit_(sym::Val{:call}, args::Array, outer_loc)
     elseif args[1] in disallowed_op
         throw("The function $(args[1]) is currently not supported by gt4py.")
     else
+        if args[1] == :astype args[2], args[3] = args[3], args[2] end
         return foast.Call(
-            func=visit(args[1], outer_loc),
+            func=visit(string(args[1]), outer_loc),
             args=[visit(x, outer_loc) for x in Base.tail(Tuple(args)) if (typeof(x) != Expr || x.head != :(kw))],
             kwargs=Dict(x.args[1] => visit(x.args[2], outer_loc) for x in Base.tail(Tuple(args)) if (typeof(x) == Expr && x.head == :kw)),
             location=outer_loc,
@@ -382,7 +393,6 @@ end
 function get_location(linenuno::LineNumberNode)
     return SourceLocation(string(linenuno.file), linenuno.line, 1, end_line=py"None", end_column=py"None")
 end
-
 
 function from_type_hint(sym::Symbol)
     if typeof(eval(sym)) == DataType
