@@ -113,8 +113,6 @@ builtin_op = Dict(
     :max => gtx.maximum
 )
 
-
-
 disallowed_op = Set([])
 
 CURRENT_MODULE = nothing
@@ -243,7 +241,13 @@ end
 
 function upscale_data(dims::Tuple{Vararg{<:Dimension}}, b_dims::Tuple{Vararg{<:Dimension}}, data::Array)
 
+    if ndims(data) == 0
+        return data[]
+    end
+
     out_size = []
+
+    # np.asarray(1)[()]             #TODO
 
     for dim in b_dims
         if dim in dims

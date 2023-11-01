@@ -105,7 +105,7 @@ function update_false_expr(false_expr::Expr, location::Symbol, value::Symbol)
     elseif false_expr.head == :elseif 
         return Expr(:elseif, false_expr.args[1], map(x -> update_false_expr(x, location, value), false_expr.args[2:end])...)
     else
-        throw("Jeff doesnt think one can land here... Please report")   #TODO please varify
+        throw("Shouldnt land here...")   #TODO please varify
     end
 end
 

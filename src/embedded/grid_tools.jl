@@ -1,5 +1,7 @@
 module GridTools
 
+ENV["PYCALL_JL_RUNTIME_PYTHON"] = Sys.which("python3.10")
+
 using Printf
 using Statistics
 using BenchmarkTools
@@ -9,8 +11,10 @@ using MacroTools
 using OffsetArrays
 using OffsetArrays: IdOffsetRange
 using Debugger
+using PyCall
 
 import Base.Broadcast: Extruded, Style, BroadcastStyle, ArrayStyle ,Broadcasted
+gtx = pyimport("gt4py.next")
 
 export Dimension, DimensionKind, HORIZONTAL, VERTICAL, LOCAL, Field, FieldShape, shape, Connectivity, FieldOffset, neighbor_sum, max_over, min_over, where, @field_operator, get_dim_name, get_dim_kind
 
@@ -162,9 +166,25 @@ Base.convert(t::Type{T}, F::Field) where {T<:Number} = Field(F.dims, convert.(t,
 @propagate_inbounds Base.getindex(F::Field{T,N}, inds::Vararg{Int,N}) where {T,N} = F.data[inds...]
 @propagate_inbounds Base.setindex!(F::Field{T,N}, val, inds::Vararg{Int,N}) where {T,N} = F.data[inds...] = val
 Base.showarg(io::IO, F::Field, toplevel) = print(io, eltype(F), " Field with dimensions ", get_dim_name.(F.broadcast_dims))
+
 function Base.promote(f1::Field, f2::Field)
     f1_new_data, f2_new_data = promote(f1.data, f2.data)
     return Field(f1.dims, f1_new_data, f1.broadcast_dims),Field(f2.dims, f2_new_data, f2.broadcast_dims)
+end
+
+function copy_data(source::Field, target::Field)
+    @assert size(source) == size(target) "Data dimensions of source and target field dont agree"
+    for ind in eachindex(source)
+        target[ind] = source[ind]
+    end
+end
+
+function copy_data(source::PyObject, target::Field)
+    @assert py"isinstance"(source, gtx.iterator.embedded.LocatedFieldImpl) "Passed source argument is not a field"
+    @assert source.shape == size(target) "Data dimensions of source and target field dont agree"
+    for ind in CartesianIndices(source.array())
+        target.data[ind] = source[Tuple(ind)...]
+    end
 end
 
 # used for custom Broadcast #TODO Maybe move to CustBroadcast.jl
@@ -229,16 +249,14 @@ addition (generic function with 1 method)
 """
 macro field_operator(expr::Expr)
     
-    wrap = :(function wrapper(args...; offset_provider::Dict{String, Connectivity} = Dict{String, Connectivity}(), backend::String = "embedded", out = nothing, kwargs...)
+    wrap = :(function wrapper(args...; offset_provider::Dict{String, Connectivity} = Dict{String, Connectivity}(), backend::String = "embedded", out, kwargs...)
         @assert isempty(GridTools.OFFSET_PROVIDER)
-
-        result = nothing
 
         if backend == "embedded"
             GridTools.assign_op(offset_provider)
             try
                 f = $(esc(expr))
-                result = f(args...; kwargs...)
+                copy_data(f(args...; kwargs...), out)
             finally
                 GridTools.unassign_op()
             end
@@ -249,11 +267,10 @@ macro field_operator(expr::Expr)
             p_out = py_args(out)
             p_offset_provider = py_args(offset_provider)
             f(p_args..., out = p_out, offset_provider = p_offset_provider; p_kwargs...)
-            result = p_out
+            copy_data(p_out, out)
         else 
             throw("The backend option you provided is not available")
         end
-        return result
     end)
 
     # field_ops[namify(expr)] = FieldOperator object # TODO
