@@ -1,6 +1,6 @@
 using OffsetArrays
 
-include("embedded/grid_tools.jl")
+include("grid_tools.jl")
 using .GridTools
 
 using Debugger
