@@ -198,15 +198,24 @@ function convert_type(a)
             push!(b_dims, gtx.Dimension(string(get_dim_name(dim))[1:end-1], kind = kind))      #TODO this requires strict naming rules for dimensions... not sure if we want that
         end
 
-        return gtx.np_as_located_field(Tuple(b_dims)...)(a.data)
+        if typeof(a.data) <: Array
+            new_data = a.data
+        else
+            new_data = np.asarray(a.data)
+            @warn "Dtype of the Field: $a is not concrete or contains an OffsetArray. Data must be copied to Python which may affect performance. Try using dtypes <: Array."
+        end
+
+        return gtx.np_as_located_field(Tuple(b_dims)...)(new_data)
 
     elseif typeof(a) <: Connectivity
     
-        kind = py_dim_kind[(get_dim_kind(a.source))]
-        source_dim  = gtx.Dimension(string(get_dim_name(a.source))[1:end-1], kind=kind)
+        source_kind = py_dim_kind[(get_dim_kind(a.source))]
+        source_dim  = gtx.Dimension(string(get_dim_name(a.source))[1:end-1], kind=source_kind)
         
-        kind = py_dim_kind[(get_dim_kind(a.target))]
-        target_dim = gtx.Dimension(string(get_dim_name(a.target))[1:end-1], kind=kind)
+        target_kind = py_dim_kind[(get_dim_kind(a.target))]
+        target_dim = gtx.Dimension(string(get_dim_name(a.target))[1:end-1], kind=target_kind)
+
+        @assert typeof(a.data) <: Array "Use concrete types for the data Array of the following Connectivity: $a"
 
         # account for different indexing in python
         return gtx.NeighborTableOffsetProvider(a.data .- 1, target_dim, source_dim, a.dims)

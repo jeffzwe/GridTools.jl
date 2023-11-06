@@ -74,17 +74,11 @@ offset_provider = Dict{String, Connectivity}(
                    "C2E" => C2E_offset_provider
                 )
 
-@field_operator function nested_add(a::Field{Float64, 1, Tuple{Cell_}}, b::Field{Float64, 1, Tuple{Cell_}})::Field{Float64, 1, Tuple{Cell_}}
-    return a .+ b
+a = Field((Cell, K), reshape(collect(1.:12.), (6, 2)))
+out = Field((Cell, K), zeros(Integer, (6, 2)))
+
+@field_operator function fo_astype(a::Field{Float64, 2, Tuple{Cell_, K_}})::Field{Int64, 2, Tuple{Cell_, K_}}
+        return convert(Int64, a)
 end
 
-a = Field(Cell, collect(1.:15.))
-b = Field(Cell, ones(15))
-out = Field(Cell, zeros(15))
-
-@field_operator function test_addition(a::Field{Float64, 1, Tuple{Cell_}}, b::Field{Float64, 1, Tuple{Cell_}})::Field{Float64, 1, Tuple{Cell_}}
-    res = nested_add(a, b)
-    return res .+ a
-end
-
-test_addition(a, b, backend = "py", out = out)
+fo_astype(a, backend = "py", out = out)
