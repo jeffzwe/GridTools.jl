@@ -1,6 +1,5 @@
+__precompile__(false)
 module GridTools
-
-ENV["PYCALL_JL_RUNTIME_PYTHON"] = Sys.which("python3.10")
 
 using Printf
 using Statistics
@@ -11,10 +10,8 @@ using MacroTools
 using OffsetArrays
 using OffsetArrays: IdOffsetRange
 using Debugger
-using PyCall
 
 import Base.Broadcast: Extruded, Style, BroadcastStyle, ArrayStyle ,Broadcasted
-gtx = pyimport("gt4py.next")
 
 export Dimension, DimensionKind, HORIZONTAL, VERTICAL, LOCAL, Field, FieldShape, shape, Connectivity, FieldOffset, neighbor_sum, max_over, min_over, where, @field_operator, get_dim_name, get_dim_kind
 
@@ -63,10 +60,10 @@ FieldOffset("V2E", (Edge_(),), (Vertex_(), V2EDim_()))
 """
 struct FieldOffset
     name::String
-    source::Tuple{Vararg{<:Dimension}}
-    target::Tuple{Vararg{<:Dimension}}
+    source::Tuple{Vararg{Dimension}}
+    target::Tuple{Vararg{Dimension}}
 
-    function FieldOffset(name::String; source::Union{Dimension, Tuple{Vararg{<:Dimension}}}, target::Union{Dimension, Tuple{Vararg{<:Dimension}}})::FieldOffset
+    function FieldOffset(name::String; source::Union{Dimension, Tuple{Vararg{Dimension}}}, target::Union{Dimension, Tuple{Vararg{Dimension}}})::FieldOffset
         if length(target) == 2 @assert typeof(target[2]).parameters[2] == LOCAL ("Second dimension in offset must be a local dimension.") end
         new(name, Tuple(source), Tuple(target))
     end
@@ -79,7 +76,6 @@ Base.getindex(f_off::FieldOffset, ind::Integer) = f_off, ind
 
 # TODO: check for #dimension at compile time and not runtime
 # TODO: <: AbstractArray{T,N} is not needed... but then we have to define our own length and iterate function for Fields
-# TODO: What type should dims and broadcast_dims have?
 """
     Field(dims::Tuple, data::Array, broadcast_dims::Tuple)
 
@@ -111,17 +107,17 @@ julia> field(E2C(1))
 ...
 ```
 """
-struct Field{T <: Union{AbstractFloat, Integer, Bool}, N, BD <: Tuple{Vararg{<:Dimension}}, D <: Tuple{Vararg{<:Dimension}}} <: AbstractArray{T,N}
+struct Field{T <: Union{AbstractFloat, Integer, Bool}, N, BD <: Tuple{Vararg{Dimension}}, D <: Tuple{Vararg{Dimension}}} <: AbstractArray{T,N}
     dims::D
     data::AbstractArray{T,N}
     broadcast_dims::BD
     
-    function Field(dims::D, data::AbstractArray{T,N}, broadcast_dims::BD = dims) where {T <: Union{AbstractFloat, Integer, Bool}, N, BD <: Tuple{Vararg{<:Dimension}}, D <: Tuple{Vararg{<:Dimension}}}
+    function Field(dims::D, data::AbstractArray{T,N}, broadcast_dims::BD = dims) where {T <: Union{AbstractFloat, Integer, Bool}, N, BD <: Tuple{Vararg{Dimension}}, D <: Tuple{Vararg{Dimension}}}
         if ndims(data) != 0 @assert length(dims) == ndims(data) end
         return new{T,N,BD,D}(dims, data, broadcast_dims)
     end
 
-    function Field(dim::Dimension, data::AbstractArray{T,N}, broadcast_dims::Union{Dimension,BD} = dim) where {T <: Union{AbstractFloat, Integer, Bool}, N, BD <: Tuple{Vararg{<:Dimension}}}
+    function Field(dim::Dimension, data::AbstractArray{T,N}, broadcast_dims::Union{Dimension,BD} = dim) where {T <: Union{AbstractFloat, Integer, Bool}, N, BD <: Tuple{Vararg{Dimension}}}
         if ndims(data) != 0 @assert ndims(data) == 1 end
         return Field(Tuple(dim), data, Tuple(broadcast_dims))
     end
@@ -172,26 +168,11 @@ function Base.promote(f1::Field, f2::Field)
     return Field(f1.dims, f1_new_data, f1.broadcast_dims),Field(f2.dims, f2_new_data, f2.broadcast_dims)
 end
 
-function copy_data(source::Field, target::Field)
-    @assert size(source) == size(target) "Data dimensions of source and target field dont agree"
-    for ind in eachindex(source)
-        target[ind] = source[ind]
-    end
-end
-
-function copy_data(source::PyObject, target::Field)
-    @assert py"isinstance"(source, gtx.iterator.embedded.LocatedFieldImpl) "Passed source argument is not a field"
-    @assert source.shape == size(target) "Data dimensions of source and target field dont agree"
-    for ind in CartesianIndices(source.array())
-        target.data[ind] = source[Tuple(ind)...]
-    end
-end
-
 # used for custom Broadcast #TODO Maybe move to CustBroadcast.jl
 struct FieldShape
-    dims::Tuple{Vararg{<:Dimension}}
-    axes::Tuple{Vararg{<:AbstractUnitRange{Int64}}}
-    broadcast_dims::Tuple{Vararg{<:Dimension}}
+    dims::Tuple{Vararg{Dimension}}
+    axes::Tuple{Vararg{AbstractUnitRange{Int64}}}
+    broadcast_dims::Tuple{Vararg{Dimension}}
 end
 
 function shape(f::Field)
@@ -220,7 +201,7 @@ struct Connectivity
 end
 
 # OFFSET_PROVIDER  -----------------------------------------------------------------------------------
-OFFSET_PROVIDER::Dict{String, Connectivity} = Dict{String, Connectivity}()
+OFFSET_PROVIDER::Union{Dict{String, Connectivity}, Nothing} = nothing
 
 # assign_op(dict::Nothing) = nothing
 function assign_op(dict::Dict{String, Connectivity})
@@ -228,12 +209,17 @@ function assign_op(dict::Dict{String, Connectivity})
 end
 
 function unassign_op()
-    global OFFSET_PROVIDER = Dict{String, Connectivity}()
+    global OFFSET_PROVIDER = nothing
 end
 
 # Field operator ----------------------------------------------------------------------
 
-py_field_ops = Dict()
+PY_FIELD_OPERATORS = Dict()
+
+function register_py_field_operator(key, value)
+    global PY_FIELD_OPERATORS[key] = value 
+end
+
 
 """
     @field_operator
@@ -248,35 +234,67 @@ addition (generic function with 1 method)
 ```
 """
 macro field_operator(expr::Expr)
-    
-    wrap = :(function wrapper(args...; offset_provider::Dict{String, Connectivity} = Dict{String, Connectivity}(), backend::String = "embedded", out, kwargs...)
-        @assert isempty(GridTools.OFFSET_PROVIDER)
+    return field_operator_wrapper(expr)
+end
 
-        if backend == "embedded"
-            GridTools.assign_op(offset_provider)
+function field_operator_wrapper(expr::Expr)
+    f_name = namify(expr)
+    f_symbol = Expr(:quote, f_name)
+
+    wrap = quote
+        function wrapper(args...; offset_provider::Dict{String, Connectivity} = Dict{String, Connectivity}(), backend::String = "embedded", out = nothing, kwargs...)
+            if isnothing(GridTools.OFFSET_PROVIDER) 
+                @assert !isnothing(out) "Must provide an out field."
+                @assert typeof(out) <: Field "Out argument is not a field."
+                GridTools.assign_op(offset_provider)
+                outermost_fo = true
+            else
+                @assert isnothing(out)
+                @assert isempty(offset_provider)
+                outermost_fo = false
+            end
+
             try
-                f = $(esc(expr))
-                copy_data(f(args...; kwargs...), out)
+                if backend == "embedded"
+                    f = $(esc(expr))
+                    outermost_fo ? out .= f(args...; kwargs...) : return f(args...; kwargs...)
+                elseif backend == "py"
+                    f = GridTools.PY_FIELD_OPERATORS[$(f_symbol)]
+                    p_args, p_kwargs, p_out, p_offset_provider = py_args.((args, kwargs, out, GridTools.OFFSET_PROVIDER))
+                    if outermost_fo
+                        f(p_args..., out = p_out, offset_provider = p_offset_provider; p_kwargs...)
+                    else
+                        return f(p_args...; p_kwargs...)
+                    end
+                else 
+                    throw("The backend option you provided is not available.")
+                end
             finally
                 GridTools.unassign_op()
             end
-        elseif backend == "py"
-            f = py_field_operator($(Expr(:quote, expr)), @__MODULE__)
-            p_args = py_args(args)
-            p_kwargs = py_args(kwargs)
-            p_out = py_args(out)
-            p_offset_provider = py_args(offset_provider)
-            f(p_args..., out = p_out, offset_provider = p_offset_provider; p_kwargs...)
-            copy_data(p_out, out)
-        else 
-            throw("The backend option you provided is not available")
         end
-    end)
-
-    # field_ops[namify(expr)] = FieldOperator object # TODO
-
-    return Expr(:(=), esc(namify(expr)), wrap)
+    end
+    
+    return quote
+        $(Expr(:(=), esc(f_name), wrap))
+        GridTools.register_py_field_operator($(f_symbol), py_field_operator($(Expr(:quote, expr)), @__MODULE__))
+    end
 end
+
+function copy_data(source::Field, target::Field)
+    @assert size(source) == size(target) "Data dimensions of source and target field dont agree"
+    for ind in eachindex(source)
+        target[ind] = source[ind]
+    end
+end
+
+function copy_data(source, target::Field)
+    @assert source.shape == size(target) "Data dimensions of source and target field dont agree"
+    for ind in CartesianIndices(source.array())
+        target.data[ind] = get(source, Tuple(ind).- 1)
+    end
+end
+
 
 # Built-ins ----------------------------------------------------------------------
 
@@ -294,12 +312,12 @@ end
 
 Sets the broadcast dimension of Field f to b_dims
 """
-function Base.broadcast(f::Field, b_dims::D)::Field where D <: Tuple{Vararg{<:Dimension}}
+function Base.broadcast(f::Field, b_dims::D)::Field where D <: Tuple{Vararg{Dimension}}
     @assert issubset(f.dims, b_dims)
     return Field(f.dims, f.data, b_dims)
 end
 
-function Base.broadcast(n::Number, b_dims::D)::Field where D <: Tuple{Vararg{<:Dimension}}
+function Base.broadcast(n::Number, b_dims::D)::Field where D <: Tuple{Vararg{Dimension}}
     return Field((), fill(n), b_dims)
 end
 
@@ -368,7 +386,7 @@ where(mask::Field, t1::Tuple, t2::Tuple)::Field = map(x -> where(mask, x[1], x[2
 
 # Includes ------------------------------------------------------------------------------------
 
-include("cust_broadcast.jl")
+include("embedded/cust_broadcast.jl")
 include("gt2py/gt2py.jl")
 
 end

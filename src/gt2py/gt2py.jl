@@ -1,6 +1,6 @@
 # Imports ---------------------------------------------------------------------------------
 ENV["PYCALL_JL_RUNTIME_PYTHON"] = Sys.which("python3.10")
-ENV["PYTHONBREAKPOINT"] = "pdb.set_trace"
+# ENV["PYTHONBREAKPOINT"] = "pdb.set_trace"
 
 using PyCall
 using MacroTools
@@ -34,6 +34,8 @@ from typing import Any, Callable, Iterable, Mapping, Type, cast
 from gt4py.next.type_system import type_info, type_specifications as ts, type_translation
 from gt4py.next.ffront import dialect_ast_enums, fbuiltins, field_operator_ast as foast
 """
+
+
 include("preprocessing.jl")
 include("single_static_assign.jl")
 include("jast_to_foast.jl")
@@ -121,7 +123,6 @@ CURRENT_MODULE = nothing
 # Methods -----------------------------------------------------------------------------------
 
 function py_field_operator(function_definition::Expr, module_::Module, backend = roundtrip.executor, grid_type = py"None"o, operator_attributes = Dict())
-
     global CURRENT_MODULE = module_
 
     foast_definition_node, closure_vars = jast_to_foast(function_definition)
@@ -152,18 +153,18 @@ end
 
 function jast_to_foast(expr::Expr)
     expr, closure_vars, annotations = preprocess_definiton(expr)
-    expr, closure_vars = remove_function_aliases(expr, closure_vars)                                                     # TODO Can be ommited once gt4py allows aliases
+    expr, closure_vars = remove_function_aliases(expr, closure_vars)             # TODO Can be ommited once gt4py allows aliases
     foast_node = visit_jast(expr, closure_vars)
     foast_node = postprocess_definition(foast_node, closure_vars, annotations)
     return foast_node, closure_vars
 end
 
 function preprocess_definiton(expr::Expr)
-    ssa = single_static_assign_pass(expr)
-    sat = single_assign_target_pass(ssa)
+    sat = single_assign_target_pass(expr)
     ucc = unchain_compairs_pass(sat)
-    closure_vars = get_closure_vars(ucc)
-    annotations = get_annotation(ucc)
+    ssa = single_static_assign_pass(ucc)
+    closure_vars = get_closure_vars(ssa)
+    annotations = get_annotation(ssa)
     return (ucc, closure_vars, annotations)
 end
 
@@ -183,28 +184,10 @@ function postprocess_definition(foast_node, closure_vars, annotations)
     return foast_node
 end
 
-
-
-function py_args(args::Tuple)
-    out_args = []
-
-    for i in args
-        push!(out_args, convert_type(i))
-    end
-
-    return out_args
-end
-
-function py_args(args::Union{Base.Pairs, Dict})
-    out_args = Dict()
-
-    for i in args
-        out_args[i.first] = convert_type(i.second)
-    end
-
-    return out_args
-end
+py_args(args::Union{Base.Pairs, Dict}) = Dict(i.first => convert_type(i.second) for i in args)
+py_args(args::Tuple) = [map(convert_type, args)...]
 py_args(arg) = convert_type(arg)
+py_args(n::Nothing) = nothing
 
 function convert_type(a)
     if typeof(a) <: Field
@@ -215,13 +198,7 @@ function convert_type(a)
             push!(b_dims, gtx.Dimension(string(get_dim_name(dim))[1:end-1], kind = kind))      #TODO this requires strict naming rules for dimensions... not sure if we want that
         end
 
-        if ndims(a.data) == length(b_dims)
-            data = a.data
-        else                                                                    # upscale array to new dimensions for gt4py
-            data = upscale_data(a.dims, a.broadcast_dims, a.data)
-        end
-
-        return gtx.np_as_located_field(Tuple(b_dims)...)(np.asarray(data))     #TODO a.data gets passed as a list, not as a numpy array as stated in documentation of PyCall
+        return gtx.np_as_located_field(Tuple(b_dims)...)(a.data)
 
     elseif typeof(a) <: Connectivity
     
@@ -231,34 +208,12 @@ function convert_type(a)
         kind = py_dim_kind[(get_dim_kind(a.target))]
         target_dim = gtx.Dimension(string(get_dim_name(a.target))[1:end-1], kind=kind)
 
-        return gtx.NeighborTableOffsetProvider(np.asarray(a.data .- 1), target_dim, source_dim, a.dims)      #TODO a.data gets passed as a list, not as a numpy array as stated in documentation of PyCall
+        # account for different indexing in python
+        return gtx.NeighborTableOffsetProvider(a.data .- 1, target_dim, source_dim, a.dims)
     else 
         @assert Symbol(typeof(a)) in keys(scalar_types) ("The type of argument $(a) is not a valid argument type to a field operator")
         return a
     end
-end
-
-
-function upscale_data(dims::Tuple{Vararg{<:Dimension}}, b_dims::Tuple{Vararg{<:Dimension}}, data::Array)
-
-    if ndims(data) == 0
-        return data[]
-    end
-
-    out_size = []
-
-    # np.asarray(1)[()]             #TODO
-
-    for dim in b_dims
-        if dim in dims
-            ind = findfirst(x -> x == dim, dims) 
-            push!(out_size, size(data)[ind])
-        else
-            push!(out_size, 1)
-        end
-    end
-
-    return reshape(data, Tuple(out_size))
 end
 
 # -------------------------------------------------------------------------

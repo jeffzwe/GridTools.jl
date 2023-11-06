@@ -3,7 +3,7 @@
 function single_assign_target_pass(expr::Expr)::Expr
     return postwalk(expr) do x
         @capture(x, (t1_, t2_ = val1_, val2_) | ((t1_, t2_) = (val1_, val2_)) | (t1_, t2_ = (val1_, val2_)) | ((t1_, t2_) = val1_, val2_)) || return x
-        return :($t1 = $val1; $t2 = $val2)
+        return :(begin $t1 = $val1; $t2 = $val2 end)
     end
 end
 
@@ -19,7 +19,7 @@ end
 
 function recursive_unchain(args::Array)::Expr
     if length(args) == 3
-        return Expr(:call, args[2], args[1], args[3])  # Alternative syntax: :($(args[2])($(args[1]), $(args[3])))
+        return Expr(:call, args[2], args[1], args[3])
     else
         return Expr(:&&, Expr(:call, args[2], args[1], args[3]), recursive_unchain(args[3:end]))
     end
@@ -66,7 +66,7 @@ function get_j_cvars(expr::Expr)::Dict
     prewalk(expr.args[2]) do x
         if @capture(x, name_(args__)) && !(name in local_vars) && !(name in math_ops)
             push!(closure_names, name)
-            return Expr(:irgendoeppis, args...)                                         # small present for tehrengruber
+            return Expr(:irgendoeppis, args...)  # small present for tehrengruber
         elseif typeof(x) == Symbol && !(x in local_vars) && !(x in math_ops)
             push!(closure_names, x)
             return x
@@ -102,15 +102,14 @@ function translate_cvars(j_closure_vars::Dict)::Dict
         elseif typeof(value) <: Function
             if key in keys(builtin_op)
                 new_value = builtin_op[key]
-            elseif key in keys(GridTools.py_field_ops)
-                new_value = GridTools.py_field_ops[key]
+            elseif key in keys(GridTools.PY_FIELD_OPERATORS)
+                new_value = GridTools.PY_FIELD_OPERATORS[key]
             end
-        elseif typeof(value) <: DataType      # Not necessary... Filter out DataTypes in the prewalk
+        elseif typeof(value) <: DataType
             key = lowercase(string(key))
             new_value = py_scalar_types[value]
-        elseif isconst(CURRENT_MODULE, Symbol(value))
-            # TODO create FrozenNameSpace...
-            new_value = "Constant"
+        elseif isconst(CURRENT_MODULE, Symbol(value))  # TODO create FrozenNameSpace...
+            throw("Access to following type: $(typeof(value)) is not yet permitted within a field operator!")
         else 
             throw("Access to following type: $(typeof(value)) is not permitted within a field operator!")
         end

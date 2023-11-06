@@ -16,7 +16,7 @@ end
 f_axes(::Broadcasted, shape::FieldShape) =                              shape.axes
 @inline f_axes(bc::Broadcasted, ::Nothing)  =                           combine_axes(bc.f, bc.args...)
 
-function ordered_subset(A::Tuple{Vararg{<:Dimension}}, B::Tuple{Vararg{<:Dimension}})
+function ordered_subset(A::Tuple{Vararg{Dimension}}, B::Tuple{Vararg{Dimension}})
     if isempty(A) || isempty(B) return false end
     i, j = 1, 1
 
@@ -63,7 +63,7 @@ end
     return Tuple(out_size)
 end
 # Helper function for combine_axes
-function promote_dims(dims_A::Tuple{Vararg{<:Dimension}}, dims_B::Tuple{Vararg{<:Dimension}})::Vector{Dimension}
+function promote_dims(dims_A::Tuple{Vararg{Dimension}}, dims_B::Tuple{Vararg{Dimension}})::Vector{Dimension}
 
     dims_list = [dims_A, dims_B]
 
@@ -95,9 +95,9 @@ function promote_dims(dims_A::Tuple{Vararg{<:Dimension}}, dims_B::Tuple{Vararg{<
     zero_in_degree_vertex_list = [key for (key, value) in in_degree if value == 0]
     while !isempty(zero_in_degree_vertex_list)
         if length(zero_in_degree_vertex_list) != 1
-            error_message = "Dimensions cannot be promoted. Could not determine order of the following dimensions: "
+            error_message = "Incompatible Dimensions: Promotion failed. Could not determine order of the following dimensions: "
             error_message *= join((dim for dim in zero_in_degree_vertex_list), ", ")
-            throw(ArgumentError(error_message))
+            throw(AssertionError(error_message))
         end
 
         v = zero_in_degree_vertex_list[1]
@@ -115,7 +115,7 @@ function promote_dims(dims_A::Tuple{Vararg{<:Dimension}}, dims_B::Tuple{Vararg{<
     if length(keys(in_degree)) > 0
         error_message = "Dimensions cannot be promoted. The following dimensions appear in contradicting order: "
         error_message *= join(keys(in_degree), ", ")
-        throw(ArgumentError(error_message))
+        throw(AssertionError(error_message))
     end
 
     return topological_sort

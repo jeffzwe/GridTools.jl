@@ -1,9 +1,5 @@
 
-
-# TODO maybe? vcat, hcat, a.dims, convert
-# TODO if not allowed, add these to a list where an error is thrown when used
-
-# TODO add checks and asserts for jast_structure
+# TODO add forbidden Symbols to a list where an error is thrown when used: :hcat, :vcat, etc
 
 # First call, takes closure_vars and passes it to the function instance
 function visit_jast(expr::Expr, closure_vars::Dict)
@@ -43,7 +39,7 @@ function visit(constant::Any, loc)
         type=type_,
         )
     catch e
-        throw("Constants of type $(typeof(constant)) are not permitted")
+        throw("Constants of type $(typeof(constant)) are not permitted.")
     end
 end
 
@@ -97,7 +93,7 @@ function visit_(sym::Val{:function}, args::Array, closure_vars::Dict)
         push!(closure_var_symbols, 
             foast.Symbol(
                 id=name,
-                type=py"ts.DeferredType(constraint=None)",
+                type=ts.DeferredType(constraint=py"None"o),
                 namespace=dialect_ast_enums.Namespace."CLOSURE",
                 location=inner_loc,
             )
@@ -127,19 +123,19 @@ end
 
 function visit_(sym::Val{:(::)}, args::Array, outer_loc)
     if typeof(args[1]) != Symbol
-        throw("Left side of a passed argument must be a variable name")  #TODO throw correct error
+        throw("Left side of a passed argument must be a variable name.")
     end
 
     try
-        eval(args)      #TODO eval in which scope?
+        eval(args)
     catch
-        throw("Type Error encountered") #TODO throw correct error
+        throw("Type Error encountered.")
     end
 
     new_type = from_type_hint(args[2])
 
     if !py"isinstance"(new_type, ts.DataType)
-        throw("Invalid Parameter Annotation Error")
+        throw("Invalid Parameter Annotation Error.")
     end
 
     return foast.DataSymbol(id=string(args[1]), location=outer_loc, type=new_type)
@@ -151,9 +147,21 @@ function visit_(sym::Val{:parameters}, args::Array, outer_loc)
 end
 
 function visit_(sym::Val{:block}, args::Array, outer_loc)
+
+    # TODO Due to bug in gt4py where a nested BlockStmt creates new local scope. Can skip for-loop if fixed
+    stmts = [visit(args[i+1], get_location(args[i])) for i in 1:2:(length(args)-1)]
+    new_stmts = []    
+
+    for arg in stmts
+        if py"isinstance"(arg, foast.BlockStmt)
+            append!(new_stmts, arg.stmts)
+        else
+            push!(new_stmts, arg)
+        end
+    end
     
     return foast.BlockStmt(
-        stmts=[visit(args[i+1], get_location(args[i])) for i in 1:2:(length(args)-1)],
+        stmts=new_stmts,
         location=outer_loc
     )
 end
@@ -192,12 +200,11 @@ function visit_(sym::Val{:elseif}, args::Array, outer_loc)
     )
 end
 
-#TODO Annotated Assign
 function visit_(sym::Val{:(=)}, args::Array, outer_loc)
     if typeof(args[1]) == Expr
-        if args[1].head == :(call)
+        if args[1].head == :call
             return visit_(Val{:function}(), args, outer_loc)
-        elseif args[1].head == :(tuple)
+        elseif args[1].head == :tuple
             new_targets = []
             for elt in args[1].args
                 push!(new_targets, foast.DataSymbol(
@@ -209,6 +216,8 @@ function visit_(sym::Val{:(=)}, args::Array, outer_loc)
             return foast.TupleTargetAssign(
                 targets=new_targets, value=visit(args[2], outer_loc), location=outer_loc
             )
+        elseif args[1].head == :(::)
+            throw("Annotated assigns are not yet supported in gt4py.")
         end
     else
         new_value = visit(args[2], outer_loc)
@@ -239,15 +248,16 @@ function visit_(sym::Val{:tuple}, args::Array, outer_loc)
 end
 
 function visit_(sym::Val{:.}, args::Array, outer_loc)
-    if typeof(args[2]) == QuoteNode
-        # return foast.Attribute(value=visit(args[1], outer_loc), attr=string(args[2]), location=outer_loc)             # TODO Frozen namespace
+    if typeof(args[2]) == QuoteNode     # TODO Frozen namespace  # return foast.Attribute(value=visit(args[1], outer_loc), attr=string(args[2]), location=outer_loc)
+        throw("Access to object attributes is not permitted within a field_operator.")
     elseif typeof(args[2]) == Expr  # we have a function broadcast aka sin.(field)
-        func_args = args[2].args    # arguments to . call are wrapped in a tuple expression TODO verify
+        # arguments to (.)call are wrapped in a tuple expression
+        func_args = args[2].args    
         pop!(args)
         append!(args, func_args)      
         return visit_(Val{:call}(), args, outer_loc)
     else
-        throw("We shouldn't land here... Report") # TODO verify
+        throw("We shouldn't land here... Report.") # TODO verify
     end
 end
 
@@ -329,13 +339,13 @@ function visit_(sym::Val{:ref}, args::Array, outer_loc)
             location=outer_loc,
         )
     else
-        throw("Expected an integer index, got $(args[2])")
+        throw("Expected an integer index, got $(args[2]).")
     end
 end
 
 function visit_(sym::Val{:return}, args::Array, outer_loc)
     if isnothing(args[1])
-        throw("Must return a value and not nothing at $outer_loc")
+        throw("Must return a value and not nothing at $outer_loc.")
     end
     return foast.Return(
         value=visit(args[1], outer_loc),
@@ -344,31 +354,29 @@ function visit_(sym::Val{:return}, args::Array, outer_loc)
 end
 
 function visit_(sym::Val{:comparison}, args::Array, outer_loc)
-    throw("All compairs should have been eliminated in the preprocessing step. Please report") #TODO
+    throw("All compairs should have been eliminated in the preprocessing step. Report.")
 end
 
 function visit_(sym::Union{Val{:&&},Val{:.&&}}, args::Array, outer_loc)
-    throw("Unsupported Python feature")
-    # return foast.BinOp(
-    #         op=visit(:(&)),
-    #         left=visit(args[1], outer_loc),
-    #         right=visit(args[2], outer_loc),
-    #         location=outer_loc
-    #     )
+    return foast.BinOp(
+            op=visit(:(&)),
+            left=visit(args[1], outer_loc),
+            right=visit(args[2], outer_loc),
+            location=outer_loc
+        )
 end
 
 function visit_(sym::Union{Val{:||}, Val{:.||}}, args::Array, outer_loc)
-    throw("Unsupported Python feature")
-    # return foast.BinOp(
-    #         op=visit(:(|)),
-    #         left=visit(args[1], outer_loc),
-    #         right=visit(args[2], outer_loc),
-    #         location=outer_loc
-    #     )
+    return foast.BinOp(
+            op=visit(:(|)),
+            left=visit(args[1], outer_loc),
+            right=visit(args[2], outer_loc),
+            location=outer_loc
+        )
 end
 
 function visit_(sym::Val{:for}, args::Array, outer_loc)
-    throw("For-loops are not supported. For-loop encountered at $outer_loc")
+    throw("For-loops are not supported. For-loop encountered at $outer_loc.")
 end
 
 # ----------------------------------------------------------------------------------------------------------------------------------
@@ -399,10 +407,10 @@ function from_type_hint(sym::Symbol)
         try
             return ts.ScalarType(kind=scalar_types[sym])
         catch
-            throw("Non-trivial dtypes like $(sym) are not yet supported")
+            throw("Non-trivial dtypes like $(sym) are not yet supported.")
         end
     else
-        throw("Feature not supported by gt4py. Needs parametric type specification")
+        throw("Feature not supported by gt4py. Needs parametric type specification.")
     end
 end
 
@@ -412,7 +420,7 @@ function from_type_hint(expr::Expr)
     if param_type[1] == :Tuple
         return ts.TupleType(types=[recursive_make_symbol(arg) for arg in Base.tail(param_type)])
     elseif param_type[1] == :Field
-        @assert length(param_type) == 4 ("Field type requires three arguments, got $(length(param_type)-1) in $(param_type)")
+        @assert length(param_type) == 4 ("Field type requires three arguments, got $(length(param_type)-1) in $(param_type).")
         
         dim = []
         (dtype, ndims, dims) = param_type[2:end]
