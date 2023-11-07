@@ -1,3 +1,9 @@
+# TODO
+# When using a precompiled Module with PyCall there are issues that arise. See https://github.com/JuliaPy/PyCall.jl#using-pycall-from-julia-modules
+# I've added my conversion attempt to GridTools/notes/Snippets.jl
+# To test the precompilation remove the line below "__precompile__(false)" and attempt a precompilation (manually or via running the tests)
+
+
 __precompile__(false)
 module GridTools
 
