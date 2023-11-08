@@ -1,5 +1,15 @@
 Base.BroadcastStyle(::Type{<:Field}) = Broadcast.ArrayStyle{Field}()
 
+struct FieldShape
+    dims::Tuple{Vararg{Dimension}}
+    axes::Tuple{Vararg{AbstractUnitRange{Int64}}}
+    broadcast_dims::Tuple{Vararg{Dimension}}
+end
+
+function shape(f::Field)
+    return FieldShape(f.dims, axes(f), f.broadcast_dims)
+end
+
 @inline function Base.Broadcast.materialize!(dest, bc::Broadcasted{ArrayStyle{Field}})
     return copyto!(dest, Base.Broadcast.instantiate(bc))
 end

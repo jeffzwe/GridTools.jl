@@ -1,4 +1,5 @@
 
+# TODO: place in submodule
 # TODO add forbidden Symbols to a list where an error is thrown when used: :hcat, :vcat, etc
 
 # First call, takes closure_vars and passes it to the function instance
@@ -44,40 +45,38 @@ function visit(constant::Any, loc)
 end
 
 function _builtin_type_constructor_symbols(captured_vars, loc)::Tuple
-    py"""
-    result: list[foast.Symbol] = []
-    skipped_types = {"tuple"}
-    python_type_builtins: dict[str, Callable[[Any], Any]] = {
-        name: getattr(builtins, name)
-        for name in set(fbuiltins.TYPE_BUILTIN_NAMES) - skipped_types
-        if hasattr(builtins, name)
-    }
-    """
+    result = []
+    skipped_types = Set(["tuple"])
+    python_type_builtins = Dict(
+        name => py"getattr"(builtins, name)
+        for name in setdiff(Set(fbuiltins.TYPE_BUILTIN_NAMES), skipped_types)
+        if py"hasattr"(builtins, name)
+    )
+
     captured_type_builtins = Dict(
             name => value
             for (name, value) in captured_vars
-            if py"$name in fbuiltins.TYPE_BUILTIN_NAMES and $value is getattr(fbuiltins, $name)"
+            if name in fbuiltins.TYPE_BUILTIN_NAMES && value == py"getattr"(fbuiltins, name)        # TODO originally was === . Doesnt work with pyobjects. Verify
     )
-    py"""
-    to_be_inserted = python_type_builtins | $captured_type_builtins
-    for name, value in to_be_inserted.items():
-        result.append(
+
+    to_be_inserted = union(python_type_builtins, captured_type_builtins)
+
+    for (name, value) in to_be_inserted
+        push!(result, 
             foast.Symbol(
-                id=name,
+                id=name, 
                 type=ts.FunctionType(
-                    pos_only_args=[
-                        ts.DeferredType(constraint=ts.ScalarType)
-                    ],  # this is a constraint type that will not be inferred (as the function is polymorphic)
-                    pos_or_kw_args={},
-                    kw_only_args={},
-                    returns=cast(ts.DataType, type_translation.from_type_hint(value)),
+                    pos_only_args=[ts.DeferredType(constraint=ts.ScalarType)],
+                    pos_or_kw_args=Dict(),
+                    kw_only_args=Dict(),
+                    returns=cast(ts.DataType, type_translation.from_type_hint(value))
                 ),
-                namespace=dialect_ast_enums.Namespace.CLOSURE,
-                location=$loc,
+                namespace=dialect_ast_enums.Namespace."CLOSURE",
+                location=loc
             )
         )
-    """
-    return py"result, to_be_inserted.keys()"
+    end
+    return result, keys(to_be_inserted)
 end
 
 function visit_(sym::Val{:function}, args::Array, closure_vars::Dict)
@@ -177,7 +176,7 @@ function visit_(sym::Val{:if}, args::Array, outer_loc)
             type=ts.DeferredType(constraint=ts.DataType),
         )
     else
-        # condition is not allowed to be a BlockStmt, in elseif the condition is always a BlockStmt
+        # condition is not allowed to be a BlockStmt. elseif condition is always a BlockStmt.
         if typeof(args[1]) == Expr && args[1].head == :block
             condition = visit(args[1].args[2], get_location(args[1].args[1]))
         else
@@ -224,7 +223,7 @@ function visit_(sym::Val{:(=)}, args::Array, outer_loc)
         constraint_type = ts.DataType
         if py"isinstance"(new_value, foast.TupleExpr)
             constraint_type = ts.TupleType
-        elseif type_info.is_concrete(new_value.type) && py"type_info.type_class($(new_value.type)) is ts.ScalarType"
+        elseif type_info.is_concrete(new_value.type) && type_info.type_class(new_value.type) == ts.ScalarType   # TODO originally was === . Doesnt work with pyobjects. Verify
             constraint_type = ts.ScalarType
         end
 

@@ -1,4 +1,4 @@
-
+# TODO: write docstring with small doctest example (if easily possible)
 
 function single_assign_target_pass(expr::Expr)::Expr
     return postwalk(expr) do x
@@ -36,15 +36,14 @@ function get_annotation(expr::Expr)::Dict
 end
 
 function get_closure_vars(expr::Expr)::Dict
-    j_closure_vars = get_j_cvars(expr)
-    return translate_cvars(j_closure_vars)
+    j_closure_vars = get_julia_closure_vars(expr)
+    return julia2py_closure_vars(j_closure_vars)
 end
 
-function get_j_cvars(expr::Expr)::Dict
+function get_julia_closure_vars(expr::Expr)::Dict
 
     expr_def = splitdef(expr)
-    @assert all(typeof.(expr_def[:args]) .== Expr) ("Field operator parameters must be type annotated.")
-    @assert all(typeof.(expr_def[:kwargs]) .== Expr) ("Field operator parameters must be type annotated.")
+    @assert all(typeof.(expr_def[:args]) .== Expr) && all(typeof.(expr_def[:kwargs]) .== Expr) ("Field operator parameters must be type annotated.")
 
     local_vars = Set()
     closure_names = Set()
@@ -83,7 +82,7 @@ function get_j_cvars(expr::Expr)::Dict
     return closure_vars 
 end
 
-function translate_cvars(j_closure_vars::Dict)::Dict
+function julia2py_closure_vars(j_closure_vars::Dict)::Dict
     py_cvars = Dict()
 
     for (key, value) in j_closure_vars
@@ -100,18 +99,17 @@ function translate_cvars(j_closure_vars::Dict)::Dict
             new_value = gtx.Dimension(string(get_dim_name(value))[1:end-1], kind=py_dim_kind[get_dim_kind(value)])
 
         elseif typeof(value) <: Function
-            if key in keys(builtin_op)
-                new_value = builtin_op[key]
-            elseif key in keys(GridTools.PY_FIELD_OPERATORS)
-                new_value = GridTools.PY_FIELD_OPERATORS[key]
-            end
+            new_value = builtin_op[key]
+
+        elseif typeof(value) <: FieldOp 
+            new_value = py_field_operator(value, CURRENT_MODULE)
         elseif typeof(value) <: DataType
             key = lowercase(string(key))
             new_value = py_scalar_types[value]
         elseif isconst(CURRENT_MODULE, Symbol(value))  # TODO create FrozenNameSpace...
-            throw("Access to following type: $(typeof(value)) is not yet permitted within a field operator!")
+            throw("Access to following type: $(typeof(value)) is not yet permitted within a field operator.")
         else 
-            throw("Access to following type: $(typeof(value)) is not permitted within a field operator!")
+            throw("Access to following type: $(typeof(value)) is not permitted within a field operator.")
         end
         py_cvars[string(key)] = new_value
     end

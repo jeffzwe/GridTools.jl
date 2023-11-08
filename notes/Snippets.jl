@@ -1,86 +1,4 @@
 
-# User code exercises from gt4py intro #####################################################################
-
-struct Cell_ <: Dimension end
-struct K_ <: Dimension end
-struct Edge_ <: Dimension end
-struct E2C_ <: Dimension end
-Cell = Cell_()
-K = K_()
-Edge = Edge_()
-E2C = E2C_()
-
-function run_add(a::Field, b::Field)
-    temp = a + b
-    return b + temp
-end
-
-function nearest_cell_to_edge(cell_values::Field, e2c::Connectivity)
-    return cell_values(e2c(1))
-end
-
-
-function sum_adjacent_cells(cells::Field, e2c::Connectivity)
-    return neighbor_sum(cells(e2c()), axis=E2CDim)
-end
-
-
-a = Field((Cell, K), fill(2.0, (3,3)))
-b = Field((Cell, K), fill(3.0, (3,3)))
-c = Field((Cell, K), fill(5.0, (3,3)))
-
-result = Field((Cell, K), zeros(3,3))
-result = run_add(a, b)
-
-@printf "%f + %f = %f ± %f" 3.0 (2.0 + 3.0) mean(result) std(result)
-println()
-
-cell_values = Field((Cell,), [1.0, 1.0, 2.0, 3.0, 5.0, 8.0])
-cell_values = Field((Cell, K), hcat([1.0, 1.0, 2.0, 3.0, 5.0, 8.0], [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]))
-
-edge_to_cell_table = [
-    [1  0];
-    [3  0];
-    [3  0];
-    [4  0];
-    [5  0];
-    [6  0];
-    [1  6];
-    [1  2];
-    [2  3];
-    [2  4];
-    [4  5];
-    [5  6]
-]
-
-cell_to_edge_table = [
-    [1   7   8];
-    [8   9  10];
-    [2   3   9];
-    [4  10  11];
-    [5  11  12];
-    [6   7  12]
-]
-
-
-E2C_offset_provider = Connectivity(edge_to_cell_table, (Cell,), (Edge,), 2)
-C2E_offset_provider = Connectivity(cell_to_edge_table, (Edge,), (Cell,), 3)
-
-offset_provider = Dict{String, Connectivity}(
-                   "E2C" => E2C_offset_provider,
-                   "C2E" => C2E_offset_provider
-                )
-
-@field_operator function nearest_cell_to_edge(cell_values::Field)
-    return cell_values(E2C())
-end
-
-nearest_cell_to_edge(cell_values, offset_provider = offset_provider)
-println(edge_values)
-
-edge_values = sum_adjacent_cells(cell_values, E2C_offset_provider)
-println(edge_values.data)
-
 
 # where implementation with @generated #####################################################################
 
@@ -162,52 +80,133 @@ end
 end
 
 
-# Custom ordering ###############################################################################
+# First try precompile version gt2py.jl ###############################################################################
 
-function custom_lt(x::Dimension, y::Dimension)
+# Imports ---------------------------------------------------------------------------------
+ENV["PYCALL_JL_RUNTIME_PYTHON"] = Sys.which("python3.10")
+# ENV["PYTHONBREAKPOINT"] = "pdb.set_trace"
 
-    type_order = Dict{DataType, Int}(
-        Cell_ => 1,
-        K_ => 2,
-        Edge_ => 3,
-        E2C_ => 4
+using PyCall
+using MacroTools
+using MacroTools: prewalk, postwalk
+
+const gtx = PyNULL()
+const np = PyNULL()
+
+const func_to_foast = PyNULL()
+const foast = PyNULL()
+const type_info = PyNULL()
+const ts = PyNULL()
+const type_translation = PyNULL()
+const dialect_ast_enums = PyNULL()
+const fbuiltins = PyNULL()
+const ClosureVarFolding = PyNULL()
+const ClosureVarTypeDeduction = PyNULL()
+const DeadClosureVarElimination = PyNULL()
+const UnpackedAssignPass = PyNULL()
+const FieldOperatorTypeDeduction = PyNULL()
+const FieldOperater = PyNULL()
+const roundtrip = PyNULL()
+const SourceLocation = PyNULL()
+
+const scalar_types = Dict()
+const py_scalar_types = Dict()
+const py_dim_kind = Dict()
+const builtin_op = Dict()
+
+function __init__()
+    copy!(gtx, pyimport("gt4py.next"))
+    copy!(np, pyimport("numpy"))
+
+    copy!(func_to_foast, pyimport("gt4py.next.ffront.func_to_foast"))
+    copy!(foast, pyimport("gt4py.next.ffront.field_operator_ast"))
+    copy!(type_info, pyimport("gt4py.next.type_system.type_info"))
+    copy!(ts, pyimport("gt4py.next.type_system.type_specifications"))
+    copy!(type_translation, pyimport("gt4py.next.type_system.type_translation"))
+    copy!(dialect_ast_enums, pyimport("gt4py.next.ffront.dialect_ast_enums"))
+    copy!(fbuiltins, pyimport("gt4py.next.ffront.fbuiltins"))
+    copy!(ClosureVarFolding, pyimport("gt4py.next.ffront.foast_passes.closure_var_folding").ClosureVarFolding)
+    copy!(ClosureVarTypeDeduction, pyimport("gt4py.next.ffront.foast_passes.closure_var_type_deduction").ClosureVarTypeDeduction)
+    copy!(DeadClosureVarElimination, pyimport("gt4py.next.ffront.foast_passes.dead_closure_var_elimination").DeadClosureVarElimination)
+    copy!(UnpackedAssignPass, pyimport("gt4py.next.ffront.foast_passes.iterable_unpack").UnpackedAssignPass)
+    copy!(FieldOperatorTypeDeduction, pyimport("gt4py.next.ffront.foast_passes.type_deduction").FieldOperatorTypeDeduction)
+    copy!(FieldOperater, pyimport("gt4py.next.ffront.decorator").FieldOperator)
+    copy!(roundtrip, pyimport("gt4py.next.program_processors.runners.roundtrip"))
+    copy!(SourceLocation, pyimport("gt4py.eve.concepts").SourceLocation)
+
+
+    # todo: place into functions
+    scalar_types_init = Dict(
+        :Bool => ts.ScalarKind."BOOL",
+        :Int32 => ts.ScalarKind."INT32",
+        :Int64 => ts.ScalarKind."INT64",
+        :Int => ts.ScalarKind."INT64",
+        :Integer => ts.ScalarKind."INT64",
+        :(<:Integer) => ts.ScalarKind."INT64",
+        :Float32 => ts.ScalarKind."FLOAT32",
+        :Float64 => ts.ScalarKind."FLOAT64",
+        :AbstractFloat => ts.ScalarKind."FLOAT64",
+        :(<:AbstractFloat) => ts.ScalarKind."FLOAT64",
+        :String => ts.ScalarKind."STRING"
     )
-    
-    # Compare based on type order
-    cmp = type_order[typeof(x)] - type_order[typeof(y)]
-    
-    # If the types are equal, maintain the original order
-    if cmp > 0
-        return false
-    else
-        return true
-    end
+
+    py_scalar_types_init = Dict(
+    Bool => py"bool",
+    Int32 => np.int32,
+    Int64 => np.int64,
+    Int => np.int64,
+    Integer => np.int64,
+    Float32 => np.float32,
+    Float64 => np.float64,
+    AbstractFloat => np.float64,
+    )
+
+    py_dim_kind_init = Dict(
+    HORIZONTAL => gtx.DimensionKind.HORIZONTAL,
+    VERTICAL => gtx.DimensionKind.VERTICAL,
+    LOCAL => gtx.DimensionKind.LOCAL
+    )
+
+    builtin_op_init = Dict(
+    :max_over => gtx.max_over, 
+    :min_over => gtx.min_over, 
+    :broadcast => gtx.broadcast,
+    :where => gtx.where,
+    :neighbor_sum => gtx.neighbor_sum,
+    :convert => gtx.astype,
+    :as_offset => gtx.as_offset,
+    :sin => gtx.sin,
+    :cos => gtx.cos,
+    :tan => gtx.tan,
+    :asin => gtx.arcsin,
+    :acos => gtx.arccos,
+    :atan => gtx.arctan,
+    :sinh => gtx.sinh,
+    :cosh => gtx.cosh,
+    :tanh => gtx.tanh,
+    :asinh => gtx.arcsinh,
+    :acosh => gtx.arccosh,
+    :atanh => gtx.arctanh,
+    :sqrt => gtx.sqrt,
+    :exp => gtx.exp,
+    :log => gtx.log,
+    :gamma => gtx.gamma,
+    :cbrt => gtx.cbrt,
+    :floor => gtx.floor,
+    :ceil => gtx.ceil,
+    :trunc => gtx.trunc,
+    :abs => gtx.abs,
+    :isfinite => gtx.isfinite,
+    :isinf => gtx.isinf,
+    :isnan => gtx.isnan,
+    :min => gtx.minimum,
+    :max => gtx.maximum
+    )
+
+    copy!(scalar_types, scalar_types_init)
+    copy!(py_scalar_types, py_scalar_types_init)
+    copy!(py_dim_kind, py_dim_kind_init)
+    copy!(builtin_op, builtin_op_init)
 end
 
 
-# PyCall Snippets
-
-config = py"config"
-
-# field_operator that puts offset_provider into local scope of the function
-
-macro field_operator(expr::Expr)
-
-    assign_dict(dict::Nothing) = nothing
-    function assign_dict(dict::Dict{String, Connectivity})
-        global OFFSET_PROVIDER = dict
-    end
-
-    function unassign_dict()
-        global OFFSET_PROVIDER = Dict{String, Connectivity}()
-    end
-
-    expr_dict = splitdef(expr)
-    
-    push!(expr_dict[:kwargs], :($(Expr(:kw, :(offset_provider::Union{Dict, Nothing}), :(nothing))))) # version with named offset_provider = nothing
-    new_exp_assign = :(assign_dict(offset_provider))
-    new_exp_unassign = :(unassign_dict())
-    expr_dict[:body].args = [expr_dict[:body].args[1:2]..., new_exp_assign, expr_dict[:body].args[3:end]..., new_exp_unassign]
-    
-    return esc(combinedef(expr_dict))
-end

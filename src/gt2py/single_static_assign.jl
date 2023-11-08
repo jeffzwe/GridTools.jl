@@ -14,7 +14,7 @@ function s_visit(expr::Expr, assignment_tracker::Dict{Symbol, Integer} = ASSIGNM
 end
 
 function s_visit(sym::Symbol, assignment_tracker::Dict{Symbol, Integer} = ASSIGNMENT_TRACKER)
-    return sym in keys(assignment_tracker) ? generate_unique_name(sym, assignment_tracker[sym]) : sym
+    return sym in keys(assignment_tracker) ? GridTools.generate_unique_name(sym, assignment_tracker[sym]) : sym
 end
 
 function s_visit(constant::Any, assignment_tracker::Dict{Symbol, Integer})
@@ -40,7 +40,7 @@ function s_visit(sym::Val{:(=)}, args::Array, assignment_tracker::Dict{Symbol, I
         assignment_tracker[args[1]] = 0
     end
 
-    args[1] = generate_unique_name(args[1], assignment_tracker[args[1]])
+    args[1] = GridTools.generate_unique_name(args[1], assignment_tracker[args[1]])
     return Expr(typeof(sym).parameters[1], args...)
 end
 
@@ -89,7 +89,7 @@ function combine_variable_states(true_expr::Union{Expr, Symbol}, false_expr::Uni
                 end
                 # True branch is the up-to-date branch
                 assignment_tracker_comb[key] = assignment_tracker_true[key]
-                location, value = generate_unique_name(key, assignment_tracker_true[key]), generate_unique_name(key, assignment_tracker_false[key])
+                location, value = GridTools.generate_unique_name(key, assignment_tracker_true[key]), GridTools.generate_unique_name(key, assignment_tracker_false[key])
 
                 false_expr = update_false_expr(false_expr, location, value)
             end
@@ -110,6 +110,4 @@ function update_false_expr(false_expr::Expr, location::Symbol, value::Symbol)
 end
 
 update_false_expr(false_expr::Symbol, location::Symbol, value::Symbol) = false_expr
-
-generate_unique_name(name::Symbol, value::Integer) = Symbol("$(name)ᐞ$(value)")
 

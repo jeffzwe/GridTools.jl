@@ -1,8 +1,6 @@
 using OffsetArrays
 using Debugger
-
-include("GridTools.jl")
-using .GridTools
+using GridTools
 
 Cell_ = Dimension{:Cell_, HORIZONTAL}
 K_ = Dimension{:K_, HORIZONTAL}
@@ -65,7 +63,6 @@ cell_to_edge_table = [
     [6   7  12]
 ]
 
-
 E2C_offset_provider = Connectivity(edge_to_cell_table, Cell, Edge, 2)
 C2E_offset_provider = Connectivity(cell_to_edge_table, Edge, Cell, 3)
 
@@ -73,6 +70,7 @@ offset_provider = Dict{String, Connectivity}(
                    "E2C" => E2C_offset_provider,
                    "C2E" => C2E_offset_provider
                 )
+
 
 @field_operator function nested_add(a::Field{Float64, 1, Tuple{Cell_}}, b::Field{Float64, 1, Tuple{Cell_}})::Field{Float64, 1, Tuple{Cell_}}
     return a .+ b
@@ -84,7 +82,7 @@ out = Field(Cell, zeros(15))
 
 @field_operator function test_addition(a::Field{Float64, 1, Tuple{Cell_}}, b::Field{Float64, 1, Tuple{Cell_}})::Field{Float64, 1, Tuple{Cell_}}
     res = nested_add(a, b)
-    return res .+ a
+    return sin.(res)
 end
 
-test_addition(a, b, backend = "py", out = out)
+test_addition(a, b, out = out)

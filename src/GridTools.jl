@@ -3,7 +3,6 @@
 # I've added my conversion attempt to GridTools/notes/Snippets.jl
 # To test the precompilation remove the line below "__precompile__(false)" and attempt a precompilation (manually or via running the tests)
 
-
 __precompile__(false)
 module GridTools
 
@@ -113,6 +112,7 @@ julia> field(E2C(1))
 ...
 ```
 """
+# TODO sequence of types: Do BD, T, N
 struct Field{T <: Union{AbstractFloat, Integer, Bool}, N, BD <: Tuple{Vararg{Dimension}}, D <: Tuple{Vararg{Dimension}}} <: AbstractArray{T,N}
     dims::D
     data::AbstractArray{T,N}
@@ -174,17 +174,6 @@ function Base.promote(f1::Field, f2::Field)
     return Field(f1.dims, f1_new_data, f1.broadcast_dims),Field(f2.dims, f2_new_data, f2.broadcast_dims)
 end
 
-# used for custom Broadcast #TODO Maybe move to CustBroadcast.jl
-struct FieldShape
-    dims::Tuple{Vararg{Dimension}}
-    axes::Tuple{Vararg{AbstractUnitRange{Int64}}}
-    broadcast_dims::Tuple{Vararg{Dimension}}
-end
-
-function shape(f::Field)
-    return FieldShape(f.dims, axes(f), f.broadcast_dims)
-end
-
 # Connectivity struct ------------------------------------------------------------
 
 """
@@ -220,10 +209,54 @@ end
 
 # Field operator ----------------------------------------------------------------------
 
-PY_FIELD_OPERATORS = Dict()
+struct FieldOp
+    name::Symbol
+    f::Function
+    expr::Expr
+    module_::Module
+end
 
-function register_py_field_operator(key, value)
-    global PY_FIELD_OPERATORS[key] = value 
+FIELD_OPERATORS::Dict{Symbol, FieldOp} = Dict{Symbol, FieldOp}()
+
+function (fo::FieldOp)(args...; offset_provider::Dict{String, Connectivity} = Dict{String, Connectivity}(), backend::String = "embedded", out = nothing, kwargs...)
+
+    FIELD_OPERATORS[fo.name] = fo
+
+    is_outermost_fo = isnothing(GridTools.OFFSET_PROVIDER)
+    if is_outermost_fo
+        @assert !isnothing(out) "Must provide an out field."
+        @assert typeof(out) <: Field "Out argument is not a field."
+        GridTools.assign_op(offset_provider)
+    else
+        @assert isnothing(out)
+        @assert isempty(offset_provider)
+    end
+
+    try
+        return GridTools.backend_execution(Val{Symbol(backend)}(), fo, args, kwargs, out, is_outermost_fo)
+    finally
+        GridTools.unassign_op()
+    end
+end
+
+function backend_execution(backend::Val{:embedded}, fo::FieldOp, args, kwargs, out, is_outermost_fo)
+    if is_outermost_fo
+        out .= fo.f(args...; kwargs...)
+        return
+    else
+        return fo.f(args...; kwargs...)
+    end
+end
+
+function backend_execution(backend::Val{:py}, fo::FieldOp, args, kwargs, out, is_outermost_fo)
+    f = py_field_operator(fo)
+    p_args, p_kwargs, p_out, p_offset_provider = py_args.((args, kwargs, out, GridTools.OFFSET_PROVIDER))
+    if is_outermost_fo
+        f(p_args..., out = p_out, offset_provider = p_offset_provider; p_kwargs...)
+        return
+    else
+        return f(p_args...; p_kwargs...)
+    end
 end
 
 
@@ -240,158 +273,20 @@ addition (generic function with 1 method)
 ```
 """
 macro field_operator(expr::Expr)
-    return field_operator_wrapper(expr)
-end
-
-function field_operator_wrapper(expr::Expr)
     f_name = namify(expr)
-    f_symbol = Expr(:quote, f_name)
 
-    wrap = quote
-        function wrapper(args...; offset_provider::Dict{String, Connectivity} = Dict{String, Connectivity}(), backend::String = "embedded", out = nothing, kwargs...)
-            if isnothing(GridTools.OFFSET_PROVIDER) 
-                @assert !isnothing(out) "Must provide an out field."
-                @assert typeof(out) <: Field "Out argument is not a field."
-                GridTools.assign_op(offset_provider)
-                outermost_fo = true
-            else
-                @assert isnothing(out)
-                @assert isempty(offset_provider)
-                outermost_fo = false
-            end
-
-            try
-                if backend == "embedded"
-                    f = $(esc(expr))
-                    outermost_fo ? out .= f(args...; kwargs...) : return f(args...; kwargs...)
-                elseif backend == "py"
-                    f = GridTools.PY_FIELD_OPERATORS[$(f_symbol)]
-                    p_args, p_kwargs, p_out, p_offset_provider = py_args.((args, kwargs, out, GridTools.OFFSET_PROVIDER))
-                    if outermost_fo
-                        f(p_args..., out = p_out, offset_provider = p_offset_provider; p_kwargs...)
-                    else
-                        return f(p_args...; p_kwargs...)
-                    end
-                else 
-                    throw("The backend option you provided is not available.")
-                end
-            finally
-                GridTools.unassign_op()
-            end
-        end
-    end
+    expr_dict = splitdef(expr)
+    expr_dict[:name] = generate_unique_name(f_name)
+    unique_expr = combinedef(expr_dict)
     
-    return quote
-        $(Expr(:(=), esc(f_name), wrap))
-        GridTools.register_py_field_operator($(f_symbol), py_field_operator($(Expr(:quote, expr)), @__MODULE__))
-    end
+    return Expr(:(=), esc(f_name), :(FieldOp(namify($(Expr(:quote, expr))), $(esc(unique_expr)), $(Expr(:quote, expr)), @__MODULE__)))
 end
 
-function copy_data(source::Field, target::Field)
-    @assert size(source) == size(target) "Data dimensions of source and target field dont agree"
-    for ind in eachindex(source)
-        target[ind] = source[ind]
-    end
-end
-
-function copy_data(source, target::Field)
-    @assert source.shape == size(target) "Data dimensions of source and target field dont agree"
-    for ind in CartesianIndices(source.array())
-        target.data[ind] = get(source, Tuple(ind).- 1)
-    end
-end
-
-
-# Built-ins ----------------------------------------------------------------------
-
-# TODO do we want this or not? Works with convert
-# function astype(a::Any, t::Type)
-#     return convert.(t, a)
-# end
-
-# function astype(f::Field, t::Type)
-#     return Field(f.dims, convert.(t, f.data), f.broadcast_dims)
-# end
-
-"""
-    broadcast(f::Field, b_dims::Tuple)
-
-Sets the broadcast dimension of Field f to b_dims
-"""
-function Base.broadcast(f::Field, b_dims::D)::Field where D <: Tuple{Vararg{Dimension}}
-    @assert issubset(f.dims, b_dims)
-    return Field(f.dims, f.data, b_dims)
-end
-
-function Base.broadcast(n::Number, b_dims::D)::Field where D <: Tuple{Vararg{Dimension}}
-    return Field((), fill(n), b_dims)
-end
-
-
-"""
-    neighbor_sum(f::Field; axis::Dimension)
-
-Sums along the axis dimension. Outputs a field with dimensions size(f.dims)-1.
-"""
-function neighbor_sum(field_in::Field; axis::Dimension)::Field
-    dim = findall(x -> x == axis, field_in.dims)[1]
-    return Field((field_in.dims[1:dim-1]..., field_in.dims[dim+1:end]...), dropdims(sum(field_in.data, dims=dim), dims=dim)) 
-end
-"""
-    max_over(f::Field; axis::Dimension)
-
-Gives the maximum along the axis dimension. Outputs a field with dimensions size(f.dims)-1.
-"""
-function max_over(field_in::Field; axis::Dimension)::Field
-    dim = findall(x -> x == axis, field_in.dims)[1]
-    return Field((field_in.dims[1:dim-1]..., field_in.dims[dim+1:end]...), dropdims(maximum(field_in.data, dims=dim), dims=dim)) 
-end
-"""
-    min_over(f::Field; axis::Dimension)
-
-Gives the minimum along the axis dimension. Outputs a field with dimensions size(f.dims)-1.
-"""
-function min_over(field_in::Field; axis::Dimension)::Field
-    dim = findall(x -> x == axis, field_in.dims)[1]
-    return Field((field_in.dims[1:dim-1]..., field_in.dims[dim+1:end]...), dropdims(minimum(field_in.data, dims=dim), dims=dim)) 
-end
-
-
-"""
-    where(mask::Field, true, false)
-
-The 'where' loops over each entry of the mask and returns values corresponding to the same indexes of either the true or the false branch.
-
-# Arguments
-- `mask::Field`: a field with eltype Boolean
-- `true`: a tuple, a field, or a scalar
-- `false`: a tuple, a field, or a scalar
-
-# Examples
-```julia-repl
-julia> mask = Field((Cell, K), rand(Bool, (3,3)))
-3x3  Field with dims (Cell_(), K_()) and broadcasted_dims (Cell_(), K_()):
- 1  0  0
- 0  1  0
- 1  1  1
-julia> a = Field((Cell, K), fill(1.0, (3,3)));
-julia> b = Field((Cell, K), fill(2.0, (3,3)));
-julia> where(mask, a, b)
-3x3  Field with dims (Cell_(), K_()) and broadcasted_dims (Cell_(), K_()):
- 1.0  2.0  2.0
- 2.0  1.0  2.0
- 1.0  1.0  1.0
-```
-
-The `where` function builtin also allows for nesting of tuples. In this scenario, it will first perform an unrolling:
-`where(mask, ((a, b), (b, a)), ((c, d), (d, c)))` -->  `where(mask, (a, b), (c, d))` and `where(mask, (b, a), (d, c))` and then combine results to match the return type:
-"""
-where(mask::Field, t1::Tuple, t2::Tuple)::Field = map(x -> where(mask, x[1], x[2]), zip(t1, t2))
-@inbounds where(mask::Field, a::Union{Field, Real}, b::Union{Field, Real})::Field = ifelse.(mask, promote(a, b)...)
-
+generate_unique_name(name::Symbol, value::Integer = 0) = Symbol("$(name)ᐞ$(value)")
 
 # Includes ------------------------------------------------------------------------------------
 
+include("embedded/builtins.jl")
 include("embedded/cust_broadcast.jl")
 include("gt2py/gt2py.jl")
 
