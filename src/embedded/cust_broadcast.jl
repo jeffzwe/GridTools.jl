@@ -43,13 +43,28 @@ end
 # Helper function for combine_axes
 @inline function get_size(f::Function, out_dims::Vector{<:Dimension}, A::FieldShape, B::FieldShape)::Tuple
     out_size = Vector()
+
+    if isempty(A.axes) && isempty(B.axes)
+        return Tuple(out_size)
+    elseif isempty(A.axes)
+        return B.axes
+    else
+        return A.axes
+    end
+
     for dim in out_dims
         ind_A = findfirst(x -> x == dim, A.dims)
         ind_B = findfirst(x -> x == dim, B.dims)
 
-        if dim in A.dims && dim in B.dims && !isempty(A.axes) && !isempty(B.axes)
+        if dim in A.dims && dim in B.dims
             if f == ifelse # union
-                push!(out_size, A.axes[ind_A])
+                low = min(minimum(A.axes[ind_A]), minimum(B.axes[ind_B]))
+                up = max(maximum(A.axes[ind_A]), maximum(B.axes[ind_B]))
+                if low == 1                                         
+                    push!(out_size, Base.OneTo(up))                 
+                else
+                    push!(out_size, IdOffsetRange(1:up-low+1, low-1))          
+                end
             else # intersection
                 low = max(minimum(A.axes[ind_A]), minimum(B.axes[ind_B]))
                 up = min(maximum(A.axes[ind_A]), maximum(B.axes[ind_B]))
@@ -59,9 +74,9 @@ end
                     push!(out_size, IdOffsetRange(1:up-low+1, low-1))          
                 end
             end
-        elseif dim in A.dims && !isempty(A.axes)
+        elseif dim in A.dims
             push!(out_size, A.axes[ind_A])
-        elseif dim in B.dims && !isempty(B.axes)
+        elseif dim in B.dims
             push!(out_size, B.axes[ind_B])
         end
     end
@@ -155,6 +170,8 @@ end
         out_dims = promote_dims(A.dims, B.dims)
         broadcast_dims = promote_dims(A.broadcast_dims, B.broadcast_dims)
     end
+
+    @bp
 
     out_size = get_size(f, out_dims, A, B)
 

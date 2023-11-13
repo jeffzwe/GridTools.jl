@@ -28,7 +28,6 @@ E2C = FieldOffset("E2C", source=Cell, target=(Edge, E2CDim))
 C2E = FieldOffset("C2E", source=Edge, target=(Cell, C2EDim))
 Koff = FieldOffset("Koff", source=K, target=K)
 
-
 a = Field((Cell, K), reshape(collect(-3.0:8.0), (6, 2)))
 b = Field((K, Edge), reshape(collect(1.0:6.0), (2, 3)))
 
@@ -85,4 +84,4 @@ out = Field(Cell, zeros(15))
     return sin.(res)
 end
 
-test_addition(a, b, out = out)
+test_addition(a, b, out = out, backend="py")

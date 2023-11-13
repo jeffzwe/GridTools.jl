@@ -18,7 +18,7 @@ using Debugger
 
 import Base.Broadcast: Extruded, Style, BroadcastStyle, ArrayStyle ,Broadcasted
 
-export Dimension, DimensionKind, HORIZONTAL, VERTICAL, LOCAL, Field, FieldShape, shape, Connectivity, FieldOffset, neighbor_sum, max_over, min_over, where, @field_operator, get_dim_name, get_dim_kind
+export Dimension, DimensionKind, HORIZONTAL, VERTICAL, LOCAL, Field, FieldShape, shape, Connectivity, FieldOffset, neighbor_sum, max_over, min_over, where, @field_operator, @module_vars, get_dim_name, get_dim_kind
 
 
 # Lib ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -113,6 +113,7 @@ julia> field(E2C(1))
 ```
 """
 # TODO sequence of types: Do BD, T, N
+# TODO add indexing of arrays to Field. No more OffsetArrays
 struct Field{T <: Union{AbstractFloat, Integer, Bool}, N, BD <: Tuple{Vararg{Dimension}}, D <: Tuple{Vararg{Dimension}}} <: AbstractArray{T,N}
     dims::D
     data::AbstractArray{T,N}
@@ -195,27 +196,16 @@ struct Connectivity
     dims::Integer
 end
 
-# OFFSET_PROVIDER  -----------------------------------------------------------------------------------
-OFFSET_PROVIDER::Union{Dict{String, Connectivity}, Nothing} = nothing
-
-# assign_op(dict::Nothing) = nothing
-function assign_op(dict::Dict{String, Connectivity})
-    global OFFSET_PROVIDER = dict
-end
-
-function unassign_op()
-    global OFFSET_PROVIDER = nothing
-end
-
 # Field operator ----------------------------------------------------------------------
 
 struct FieldOp
     name::Symbol
     f::Function
     expr::Expr
-    module_::Module
+    closure_vars::Dict
 end
 
+OFFSET_PROVIDER::Union{Dict{String, Connectivity}, Nothing} = nothing
 FIELD_OPERATORS::Dict{Symbol, FieldOp} = Dict{Symbol, FieldOp}()
 
 function (fo::FieldOp)(args...; offset_provider::Dict{String, Connectivity} = Dict{String, Connectivity}(), backend::String = "embedded", out = nothing, kwargs...)
@@ -226,7 +216,7 @@ function (fo::FieldOp)(args...; offset_provider::Dict{String, Connectivity} = Di
     if is_outermost_fo
         @assert !isnothing(out) "Must provide an out field."
         @assert typeof(out) <: Field "Out argument is not a field."
-        GridTools.assign_op(offset_provider)
+        global OFFSET_PROVIDER = offset_provider
     else
         @assert isnothing(out)
         @assert isempty(offset_provider)
@@ -235,7 +225,7 @@ function (fo::FieldOp)(args...; offset_provider::Dict{String, Connectivity} = Di
     try
         return GridTools.backend_execution(Val{Symbol(backend)}(), fo, args, kwargs, out, is_outermost_fo)
     finally
-        GridTools.unassign_op()
+        global OFFSET_PROVIDER = nothing
     end
 end
 
@@ -259,6 +249,69 @@ function backend_execution(backend::Val{:py}, fo::FieldOp, args, kwargs, out, is
     end
 end
 
+function get_closure_vars(expr::Expr, current_vars::Dict)::Dict
+
+    expr_def = splitdef(expr)
+    @assert all(typeof.(expr_def[:args]) .== Expr) && all(typeof.(expr_def[:kwargs]) .== Expr) ("Field operator parameters must be type annotated.")
+
+    local_vars = Set()
+    closure_names = Set()
+    closure_vars = Dict()
+
+    # catch all local variables
+    postwalk(expr) do x
+        if @capture(x, (name_ = value_) | (name_::type_))
+            if typeof(name) == Symbol
+                push!(local_vars, name)
+            elseif typeof(name) == Expr
+                if name.head == :tuple
+                    push!(local_vars, name.args...)
+                elseif name.head == :call
+                    push!(local_vars, name.args[1])
+                else
+                    throw("For the following local variable: $name we dont provide support yet. Please report.") # TODO: verify
+                end
+            end
+        end
+        return x
+    end
+
+    # catch all dimensions
+    postwalk(expr.args[1]) do x
+        if typeof(x) == Symbol && x in keys(current_vars) && typeof(current_vars[x]) == DataType && current_vars[x] <: Dimension
+            push!(closure_names, x)
+        end
+    end
+
+    # catch all closure_variables
+    prewalk(expr.args[2]) do x
+        if @capture(x, name_(args__)) && !(name in local_vars) && !(name in math_ops)
+            push!(closure_names, name)
+            return Expr(:irgendoeppis, args...)  # small present for tehrengruber
+        elseif typeof(x) == Symbol && !(x in local_vars) && !(x in math_ops)
+            push!(closure_names, x)
+            return x
+        else 
+            return x
+        end
+    end
+
+    # update dictionary
+    for name in closure_names
+        closure_vars[name] = current_vars[name]
+    end
+
+    return closure_vars
+end
+
+macro module_vars()
+    return esc(quote
+            module_vars = Dict(name => Core.eval(@__MODULE__, name) for name in names(@__MODULE__)[6:end])
+            local_vars = Base.@locals
+            merge(module_vars, local_vars, GridTools.builtin_op)
+        end)
+end
+
 
 """
     @field_operator
@@ -279,7 +332,7 @@ macro field_operator(expr::Expr)
     expr_dict[:name] = generate_unique_name(f_name)
     unique_expr = combinedef(expr_dict)
     
-    return Expr(:(=), esc(f_name), :(FieldOp(namify($(Expr(:quote, expr))), $(esc(unique_expr)), $(Expr(:quote, expr)), @__MODULE__)))
+    return Expr(:(=), esc(f_name), :(FieldOp(namify($(Expr(:quote, expr))), $(esc(unique_expr)), $(Expr(:quote, expr)), get_closure_vars($(Expr(:quote, expr)), @module_vars))))
 end
 
 generate_unique_name(name::Symbol, value::Integer = 0) = Symbol("$(name)ᐞ$(value)")

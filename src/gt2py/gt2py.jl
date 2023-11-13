@@ -5,6 +5,7 @@ ENV["PYCALL_JL_RUNTIME_PYTHON"] = Sys.which("python3.10")
 using PyCall
 using MacroTools
 using MacroTools: prewalk, postwalk
+using SpecialFunctions
 
 const cast = PyNULL()
 const builtins = PyNULL()
@@ -31,7 +32,7 @@ const SourceLocation = PyNULL()
 const scalar_types = Dict()
 const py_scalar_types = Dict()
 const py_dim_kind = Dict()
-const builtin_op = Dict()
+const builtin_py_op = Dict()
 
 function __init__()
 
@@ -74,15 +75,49 @@ math_ops = union(bin_op, unary_op, comp_op)
 
 disallowed_op = Set([])
 
-CURRENT_MODULE = nothing
+builtin_op = Dict(
+    :max_over => max_over, 
+    :min_over => min_over, 
+    :broadcast => GridTools.broadcast,
+    :where => GridTools.where,
+    :neighbor_sum => neighbor_sum,
+    :convert => convert,
+    # :as_offset => gtx.as_offset,
+    :sin => sin,
+    :cos => cos,
+    :tan => tan,
+    :asin => asin,
+    :acos => acos,
+    :atan => atan,
+    :sinh => sinh,
+    :cosh => cosh,
+    :tanh => tanh,
+    :asinh => asinh,
+    :acosh => acosh,
+    :atanh => atanh,
+    :sqrt => sqrt,
+    :exp => exp,
+    :log => log,
+    :gamma => gamma,
+    :cbrt => cbrt,
+    :floor => floor,
+    :ceil => ceil,
+    :trunc => trunc,
+    :abs => abs,
+    :isfinite => isfinite,
+    :isinf => isinf,
+    :isnan => isnan,
+    :min => min,
+    :max => max
+    )
 
+CLOSURE_VARS::Dict = Dict()
 
 # Methods -----------------------------------------------------------------------------------
 
 function py_field_operator(fo::FieldOp, backend = roundtrip.executor, grid_type = py"None"o, operator_attributes = Dict())
-    global CURRENT_MODULE = fo.module_
 
-    foast_definition_node, closure_vars = jast_to_foast(fo.expr)
+    foast_definition_node, closure_vars = jast_to_foast(fo.expr, fo.closure_vars)
     loc = foast_definition_node.location
 
     operator_attribute_nodes = Dict(
@@ -108,26 +143,27 @@ function py_field_operator(fo::FieldOp, backend = roundtrip.executor, grid_type 
         )
 end
 
-function jast_to_foast(expr::Expr)
-    expr, closure_vars, annotations = preprocess_definiton(expr)
+function jast_to_foast(expr::Expr, closure_vars::Dict)
+    expr, closure_vars, annotations = preprocess_definiton(expr, closure_vars)
     expr, closure_vars = remove_function_aliases(expr, closure_vars)             # TODO Can be ommited once gt4py allows aliases
     foast_node = visit_jast(expr, closure_vars)
     foast_node = postprocess_definition(foast_node, closure_vars, annotations)
     return foast_node, closure_vars
 end
 
-function preprocess_definiton(expr::Expr)
+function preprocess_definiton(expr::Expr, closure_vars::Dict)
     sat = single_assign_target_pass(expr)
     ucc = unchain_compairs_pass(sat)
     ssa = single_static_assign_pass(ucc)
-    closure_vars = get_closure_vars(ssa)
-    annotations = get_annotation(ssa)
-    return (ucc, closure_vars, annotations)
+    closure_vars = translate_closure_vars(closure_vars)
+    annotations = get_annotation(ssa, closure_vars)
+    return (ssa, closure_vars, annotations)
 end
 
 function postprocess_definition(foast_node, closure_vars, annotations)
     foast_node = ClosureVarFolding.apply(foast_node, closure_vars)
     foast_node = DeadClosureVarElimination.apply(foast_node)
+    @bp
     foast_node = ClosureVarTypeDeduction.apply(foast_node, closure_vars)
 
     foast_node = FieldOperatorTypeDeduction.apply(foast_node)
@@ -253,14 +289,14 @@ function init_py_utils()
     LOCAL => gtx.DimensionKind.LOCAL
     )
 
-    builtin_op_init = Dict(
+    builtin_py_op_init = Dict(
     :max_over => gtx.max_over, 
     :min_over => gtx.min_over, 
     :broadcast => gtx.broadcast,
     :where => gtx.where,
     :neighbor_sum => gtx.neighbor_sum,
     :convert => gtx.astype,
-    :as_offset => gtx.as_offset,
+    # :as_offset => gtx.as_offset,
     :sin => gtx.sin,
     :cos => gtx.cos,
     :tan => gtx.tan,
@@ -292,5 +328,5 @@ function init_py_utils()
     copy!(scalar_types, scalar_types_init)
     copy!(py_scalar_types, py_scalar_types_init)
     copy!(py_dim_kind, py_dim_kind_init)
-    copy!(builtin_op, builtin_op_init)
+    copy!(builtin_py_op, builtin_py_op_init)
 end

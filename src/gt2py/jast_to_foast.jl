@@ -4,44 +4,7 @@
 
 # First call, takes closure_vars and passes it to the function instance
 function visit_jast(expr::Expr, closure_vars::Dict)
-    return visit_(Val{:function}(), expr.args, closure_vars)
-end
-
-function visit(expr::Expr, loc=nothing)
-   return visit_(Val{expr.head}(), expr.args, loc)
-end
-
-function visit(sym::Symbol, loc)
-    if sym in keys(scalar_types)
-        return foast.Name(id=lowercase(string(sym)), location=loc)
-    else
-        return foast.Name(id=string(sym), location=loc)
-    end
-end
-
-function visit(sym::String, loc)
-    return foast.Name(id=sym, location=loc)
-end
-
-# Called when Symbol is a Unary, Binary or Compare Operation
-function visit(sym::Symbol)
-    return visit_(Val{sym}())
-end
-
-# Catches Integers, Floats, Bool, Strings, etc. otherwise throws error
-function visit(constant::Any, loc)
-    try
-        type_ = type_translation.from_value(constant)
-        type_ = type_ == ts.ScalarType(kind=ts.ScalarKind."INT32") ? ts.ScalarType(kind=ts.ScalarKind."INT64") : type_
-
-        return foast.Constant(
-        value=constant,
-        location=loc,
-        type=type_,
-        )
-    catch e
-        throw("Constants of type $(typeof(constant)) are not permitted.")
-    end
+    return visit_function(expr.args, closure_vars)
 end
 
 function _builtin_type_constructor_symbols(captured_vars, loc)::Tuple
@@ -79,7 +42,7 @@ function _builtin_type_constructor_symbols(captured_vars, loc)::Tuple
     return result, keys(to_be_inserted)
 end
 
-function visit_(sym::Val{:function}, args::Array, closure_vars::Dict)
+function visit_function(args::Array, closure_vars::Dict)
     inner_loc = get_location(args[2].args[1])
     args[2].args = args[2].args[2:end]
     closure_var_symbols, skip_names = _builtin_type_constructor_symbols(closure_vars, inner_loc)
@@ -107,8 +70,8 @@ function visit_(sym::Val{:function}, args::Array, closure_vars::Dict)
         function_header = function_header.args[1]
     end
 
-    for arg in Base.tail((Tuple(function_header.args)))
-        function_params = vcat(function_params, visit(arg, inner_loc))
+    for param in Base.tail((Tuple(function_header.args)))
+        function_params = vcat(function_params, visit_types(param.args, closure_vars, inner_loc))
     end
     
     return foast.FunctionDefinition(
@@ -120,18 +83,12 @@ function visit_(sym::Val{:function}, args::Array, closure_vars::Dict)
     )
 end
 
-function visit_(sym::Val{:(::)}, args::Array, outer_loc)
+function visit_types(args::Array, closure_vars::Dict, outer_loc)
     if typeof(args[1]) != Symbol
         throw("Left side of a passed argument must be a variable name.")
     end
 
-    try
-        eval(args)
-    catch
-        throw("Type Error encountered.")
-    end
-
-    new_type = from_type_hint(args[2])
+    new_type = from_type_hint(args[2], closure_vars)
 
     if !py"isinstance"(new_type, ts.DataType)
         throw("Invalid Parameter Annotation Error.")
@@ -139,6 +96,45 @@ function visit_(sym::Val{:(::)}, args::Array, outer_loc)
 
     return foast.DataSymbol(id=string(args[1]), location=outer_loc, type=new_type)
 
+end
+
+
+
+function visit(expr::Expr, loc=nothing)
+   return visit_(Val{expr.head}(), expr.args, loc)
+end
+
+function visit(sym::Symbol, loc)
+    if sym in keys(scalar_types)
+        return foast.Name(id=lowercase(string(sym)), location=loc)
+    else
+        return foast.Name(id=string(sym), location=loc)
+    end
+end
+
+function visit(sym::String, loc)
+    return foast.Name(id=sym, location=loc)
+end
+
+# Called when Symbol is a Unary, Binary or Compare Operation
+function visit(sym::Symbol)
+    return visit_(Val{sym}())
+end
+
+# Catches Integers, Floats, Bool, Strings, etc. otherwise throws error
+function visit(constant::Any, loc)
+    try
+        type_ = type_translation.from_value(constant)
+        type_ = type_ == ts.ScalarType(kind=ts.ScalarKind."INT32") ? ts.ScalarType(kind=ts.ScalarKind."INT64") : type_
+
+        return foast.Constant(
+        value=constant,
+        location=loc,
+        type=type_,
+        )
+    catch e
+        throw("Constants of type $(typeof(constant)) are not permitted.")
+    end
 end
 
 function visit_(sym::Val{:parameters}, args::Array, outer_loc)
@@ -401,19 +397,23 @@ function get_location(linenuno::LineNumberNode)
     return SourceLocation(string(linenuno.file), linenuno.line, 1, end_line=py"None", end_column=py"None")
 end
 
-function from_type_hint(sym::Symbol)
-    if typeof(eval(sym)) == DataType
-        try
-            return ts.ScalarType(kind=scalar_types[sym])
-        catch
-            throw("Non-trivial dtypes like $(sym) are not yet supported.")
+function from_type_hint(sym::Symbol, closure_vars::Dict)
+    if typeof(closure_vars[sym]) == DataType
+        if closure_vars[sym] <: Dimension
+            throw("Dimensions are not valid function arguments")
+        else 
+            try
+                return ts.ScalarType(kind=scalar_types[sym])
+            catch
+                throw("Non-trivial dtypes like $(sym) are not yet supported.")
+            end
         end
     else
-        throw("Feature not supported by gt4py. Needs parametric type specification.")
+        throw("Feature not supported by gt4py. Needs parametric type specification. ")
     end
 end
 
-function from_type_hint(expr::Expr)
+function from_type_hint(expr::Expr, closure_vars::Dict)
     @assert expr.head == :curly
     param_type = expr.args
     if param_type[1] == :Tuple
@@ -425,16 +425,13 @@ function from_type_hint(expr::Expr)
         (dtype, ndims, dims) = param_type[2:end]
 
         for d in dims.args[2:end]
-            if Core.eval(CURRENT_MODULE, d) <: Dimension{<:Any, HORIZONTAL}
-                kind = gtx.common.DimensionKind."HORIZONTAL"
-            elseif Core.eval(CURRENT_MODULE, d) <: Dimension{<:Any, VERTICAL}
-                kind = gtx.common.DimensionKind."VERTICAL"
-            else
-                kind = gtx.common.DimensionKind."LOCAL"
-            end
-            push!(dim, gtx.common.Dimension(string(d)[1:end-1], kind=kind))     #TODO only works if we have strict naming sceme in julia
+            @assert string(d) in keys(closure_vars)
+            push!(dim, closure_vars[string(d)])     #TODO only works if we have strict naming sceme in julia
         end
 
         return ts.FieldType(dims=dim, dtype=ts.ScalarType(kind=scalar_types[dtype])) 
+    else
+        throw("The following kind of function argument is not yet supported: $param_type")
     end
+
 end

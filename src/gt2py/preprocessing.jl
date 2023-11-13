@@ -25,69 +25,23 @@ function recursive_unchain(args::Array)::Expr
     end
 end
 
-function get_annotation(expr::Expr)::Dict
+function get_annotation(expr::Expr, closure_vars::Dict)::Dict
     out_ann = Dict()
 
     if expr.args[1].head == :(::)
-        return_type = from_type_hint(expr.args[1].args[2])
+        return_type = from_type_hint(expr.args[1].args[2], closure_vars)
         out_ann["return"] = return_type
     end
     return out_ann
 end
 
-function get_closure_vars(expr::Expr)::Dict
-    j_closure_vars = get_julia_closure_vars(expr)
-    return julia2py_closure_vars(j_closure_vars)
-end
-
-function get_julia_closure_vars(expr::Expr)::Dict
-
-    expr_def = splitdef(expr)
-    @assert all(typeof.(expr_def[:args]) .== Expr) && all(typeof.(expr_def[:kwargs]) .== Expr) ("Field operator parameters must be type annotated.")
-
-    local_vars = Set()
-    closure_names = Set()
-    closure_vars = Dict()
-
-    # catch all local variables
-    postwalk(expr) do x
-        if @capture(x, (name_ = value_) | (name_::type_))
-            if typeof(name) == Symbol
-                push!(local_vars, name)
-            elseif typeof(name) == Expr && name.head == :tuple
-                push!(local_vars, name.args...)
-            end
-        end
-        return x
-    end
-
-    # catch all closure_variables
-    prewalk(expr.args[2]) do x
-        if @capture(x, name_(args__)) && !(name in local_vars) && !(name in math_ops)
-            push!(closure_names, name)
-            return Expr(:irgendoeppis, args...)  # small present for tehrengruber
-        elseif typeof(x) == Symbol && !(x in local_vars) && !(x in math_ops)
-            push!(closure_names, x)
-            return x
-        else 
-            return x
-        end
-    end
-
-    # update dictionary
-    for name in closure_names
-        closure_vars[name] = Core.eval(CURRENT_MODULE, name)
-    end
-
-    return closure_vars 
-end
-
-function julia2py_closure_vars(j_closure_vars::Dict)::Dict
-    py_cvars = Dict()
+function translate_closure_vars(j_closure_vars::Dict)::Dict
+    py_closure_vars = Dict()
 
     for (key, value) in j_closure_vars
         new_value = nothing
-        if typeof(value) == FieldOffset
+
+        if typeof(value) <: FieldOffset
             py_source = map(dim -> gtx.Dimension(string(get_dim_name(dim))[1:end-1], kind=py_dim_kind[get_dim_kind(dim)]), value.source)
             py_target = map(dim -> gtx.Dimension(string(get_dim_name(dim))[1:end-1], kind=py_dim_kind[get_dim_kind(dim)]), value.target)
             new_value = gtx.FieldOffset(
@@ -95,23 +49,24 @@ function julia2py_closure_vars(j_closure_vars::Dict)::Dict
                 source= length(py_source) == 1 ? py_source[1] : py_source, 
                 target= length(py_target) == 1 ? py_target[1] : py_target
             )
-        elseif typeof(value) <: Dimension
-            new_value = gtx.Dimension(string(get_dim_name(value))[1:end-1], kind=py_dim_kind[get_dim_kind(value)])
-
         elseif typeof(value) <: Function
-            new_value = builtin_op[key]
+            new_value = builtin_py_op[key]
 
         elseif typeof(value) <: FieldOp 
-            new_value = py_field_operator(value, CURRENT_MODULE)
+            new_value = py_field_operator(value)
         elseif typeof(value) <: DataType
-            key = lowercase(string(key))
-            new_value = py_scalar_types[value]
-        elseif isconst(CURRENT_MODULE, Symbol(value))  # TODO create FrozenNameSpace...
-            throw("Access to following type: $(typeof(value)) is not yet permitted within a field operator.")
+            if value <: Dimension
+                new_value = gtx.Dimension(string(value.parameters[1])[1:end-1], kind=py_dim_kind[value.parameters[2]])
+            else
+                key = lowercase(string(key))
+                new_value = py_scalar_types[value]
+            end
+        elseif false #isconst(CURRENT_MODULE, Symbol(value))  
+            # TODO handle constants with FrozenNameSpace...
         else 
             throw("Access to following type: $(typeof(value)) is not permitted within a field operator.")
         end
-        py_cvars[string(key)] = new_value
+        py_closure_vars[string(key)] = new_value
     end
-    return py_cvars
+    return py_closure_vars
 end
