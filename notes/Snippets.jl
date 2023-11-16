@@ -80,133 +80,71 @@ end
 end
 
 
-# First try precompile version gt2py.jl ###############################################################################
+# Part of custom broadcast using Idefault-----------------------------------------------------------------------------------------------------------------------------------------
 
-# Imports ---------------------------------------------------------------------------------
-ENV["PYCALL_JL_RUNTIME_PYTHON"] = Sys.which("python3.10")
-# ENV["PYTHONBREAKPOINT"] = "pdb.set_trace"
+# Custom preprocess(): Inorder to pass output dimensions to extrude
+@inline function Base.Broadcast.preprocess(dest::FieldShape, A::Field)
+    if ndims(A) == 0 
+        return (A[],)
+    else
+        return f_extrude(Base.Broadcast.broadcast_unalias(dest, A), dest)
+    end
+end
 
-using PyCall
-using MacroTools
-using MacroTools: prewalk, postwalk
-
-const gtx = PyNULL()
-const np = PyNULL()
-
-const func_to_foast = PyNULL()
-const foast = PyNULL()
-const type_info = PyNULL()
-const ts = PyNULL()
-const type_translation = PyNULL()
-const dialect_ast_enums = PyNULL()
-const fbuiltins = PyNULL()
-const ClosureVarFolding = PyNULL()
-const ClosureVarTypeDeduction = PyNULL()
-const DeadClosureVarElimination = PyNULL()
-const UnpackedAssignPass = PyNULL()
-const FieldOperatorTypeDeduction = PyNULL()
-const FieldOperater = PyNULL()
-const roundtrip = PyNULL()
-const SourceLocation = PyNULL()
-
-const scalar_types = Dict()
-const py_scalar_types = Dict()
-const py_dim_kind = Dict()
-const builtin_op = Dict()
-
-function __init__()
-    copy!(gtx, pyimport("gt4py.next"))
-    copy!(np, pyimport("numpy"))
-
-    copy!(func_to_foast, pyimport("gt4py.next.ffront.func_to_foast"))
-    copy!(foast, pyimport("gt4py.next.ffront.field_operator_ast"))
-    copy!(type_info, pyimport("gt4py.next.type_system.type_info"))
-    copy!(ts, pyimport("gt4py.next.type_system.type_specifications"))
-    copy!(type_translation, pyimport("gt4py.next.type_system.type_translation"))
-    copy!(dialect_ast_enums, pyimport("gt4py.next.ffront.dialect_ast_enums"))
-    copy!(fbuiltins, pyimport("gt4py.next.ffront.fbuiltins"))
-    copy!(ClosureVarFolding, pyimport("gt4py.next.ffront.foast_passes.closure_var_folding").ClosureVarFolding)
-    copy!(ClosureVarTypeDeduction, pyimport("gt4py.next.ffront.foast_passes.closure_var_type_deduction").ClosureVarTypeDeduction)
-    copy!(DeadClosureVarElimination, pyimport("gt4py.next.ffront.foast_passes.dead_closure_var_elimination").DeadClosureVarElimination)
-    copy!(UnpackedAssignPass, pyimport("gt4py.next.ffront.foast_passes.iterable_unpack").UnpackedAssignPass)
-    copy!(FieldOperatorTypeDeduction, pyimport("gt4py.next.ffront.foast_passes.type_deduction").FieldOperatorTypeDeduction)
-    copy!(FieldOperater, pyimport("gt4py.next.ffront.decorator").FieldOperator)
-    copy!(roundtrip, pyimport("gt4py.next.program_processors.runners.roundtrip"))
-    copy!(SourceLocation, pyimport("gt4py.eve.concepts").SourceLocation)
-
-
-    # todo: place into functions
-    scalar_types_init = Dict(
-        :Bool => ts.ScalarKind."BOOL",
-        :Int32 => ts.ScalarKind."INT32",
-        :Int64 => ts.ScalarKind."INT64",
-        :Int => ts.ScalarKind."INT64",
-        :Integer => ts.ScalarKind."INT64",
-        :(<:Integer) => ts.ScalarKind."INT64",
-        :Float32 => ts.ScalarKind."FLOAT32",
-        :Float64 => ts.ScalarKind."FLOAT64",
-        :AbstractFloat => ts.ScalarKind."FLOAT64",
-        :(<:AbstractFloat) => ts.ScalarKind."FLOAT64",
-        :String => ts.ScalarKind."STRING"
-    )
-
-    py_scalar_types_init = Dict(
-    Bool => py"bool",
-    Int32 => np.int32,
-    Int64 => np.int64,
-    Int => np.int64,
-    Integer => np.int64,
-    Float32 => np.float32,
-    Float64 => np.float64,
-    AbstractFloat => np.float64,
-    )
-
-    py_dim_kind_init = Dict(
-    HORIZONTAL => gtx.DimensionKind.HORIZONTAL,
-    VERTICAL => gtx.DimensionKind.VERTICAL,
-    LOCAL => gtx.DimensionKind.LOCAL
-    )
-
-    builtin_op_init = Dict(
-    :max_over => gtx.max_over, 
-    :min_over => gtx.min_over, 
-    :broadcast => gtx.broadcast,
-    :where => gtx.where,
-    :neighbor_sum => gtx.neighbor_sum,
-    :convert => gtx.astype,
-    :as_offset => gtx.as_offset,
-    :sin => gtx.sin,
-    :cos => gtx.cos,
-    :tan => gtx.tan,
-    :asin => gtx.arcsin,
-    :acos => gtx.arccos,
-    :atan => gtx.arctan,
-    :sinh => gtx.sinh,
-    :cosh => gtx.cosh,
-    :tanh => gtx.tanh,
-    :asinh => gtx.arcsinh,
-    :acosh => gtx.arccosh,
-    :atanh => gtx.arctanh,
-    :sqrt => gtx.sqrt,
-    :exp => gtx.exp,
-    :log => gtx.log,
-    :gamma => gtx.gamma,
-    :cbrt => gtx.cbrt,
-    :floor => gtx.floor,
-    :ceil => gtx.ceil,
-    :trunc => gtx.trunc,
-    :abs => gtx.abs,
-    :isfinite => gtx.isfinite,
-    :isinf => gtx.isinf,
-    :isnan => gtx.isnan,
-    :min => gtx.minimum,
-    :max => gtx.maximum
-    )
-
-    copy!(scalar_types, scalar_types_init)
-    copy!(py_scalar_types, py_scalar_types_init)
-    copy!(py_dim_kind, py_dim_kind_init)
-    copy!(builtin_op, builtin_op_init)
+@inline function f_extrude(A::Field, dest::FieldShape)
+    return Extruded(A, f_newindexer(A.dims, dest.broadcast_dims, dest.axes)...)
 end
 
 
+@inline f_newindexer(dims::Tuple, b_dims::Tuple{}, ax::Tuple) = (), ()
+@inline function f_newindexer(dims::Tuple, b_dims::Tuple, ax::Tuple)
+    ind1 = b_dims[1]
+    keep, Idefault = f_newindexer(dims, Base.tail(b_dims), ax)
+    next_keep = ind1 in dims
+    (next_keep, keep...) , (next_keep ? minimum(ax[get_dim_ind(dims, ind1)]) : 0, Idefault...)
+end 
+
+
+# -----------------------------------------------------------------------------------------------------------------------------------------
+
+# Custom getindex(): Drops additional dimensions to access array size
+@inline function Base.getindex(bc::Broadcasted{ArrayStyle{Field}}, I::Union{Integer,CartesianIndex})
+    @boundscheck Base.Broadcast.checkbounds(bc, I)
+    @inbounds f_broadcast_getindex(bc, I)
+end
+
+Base.@propagate_inbounds function f_broadcast_getindex(bc::Broadcasted{<:Any,<:Any,<:Any,<:Any}, I)
+    args = f_getindex(bc.args, I)
+    return Base.Broadcast._broadcast_getindex_evalf(bc.f, args...)
+end
+
+# No changes to original: Utilities for f_broadcast_getindex
+Base.@propagate_inbounds f_getindex(args::Tuple, I) = (f_broadcast_getindex(args[1], I), f_getindex(Base.tail(args), I)...)
+Base.@propagate_inbounds f_getindex(args::Tuple{Any}, I) = (f_broadcast_getindex(args[1], I),)
+Base.@propagate_inbounds f_getindex(args::Tuple{}, I) = ()
+
+# No changes to original
+Base.@propagate_inbounds f_broadcast_getindex(A::Union{Ref,AbstractArray{<:Any,0},Number}, I) = A[] # Scalar-likes can just ignore all indices
+Base.@propagate_inbounds f_broadcast_getindex(::Ref{Type{T}}, I) where {T} = T
+# Tuples are statically known to be singleton or vector-like
+Base.@propagate_inbounds f_broadcast_getindex(A::Tuple{Any}, I) = A[1]
+Base.@propagate_inbounds f_broadcast_getindex(A::Tuple, I) = A[I[1]]
+# Everything else falls back to dynamically dropping broadcasted indices based upon its axes
+Base.@propagate_inbounds f_broadcast_getindex(A, I) = A[Base.Broadcast.newindex(A, I)]
+Base.@propagate_inbounds f_broadcast_getindex(b::Extruded, i) = try b.x[f_newindex(i, b.keeps, b.defaults)] catch nothing end
+
+@inline f_newindex(I::CartesianIndex, keep, Idefault) = CartesianIndex(_f_newindex(I.I, keep, Idefault))
+@inline f_newindex(i::Integer, keep::Tuple, idefault) = ifelse(keep[1], i, idefault[1])
+@inline f_newindex(i::Integer, keep::Tuple{}, idefault) = CartesianIndex(())
+
+@inline _f_newindex(i::Integer, keep::Tuple, idefault) = ifelse(keep[1], i, idefault[1])
+@inline _f_newindex(i::Integer, keep::Tuple{}, idefault) = CartesianIndex(())
+@inline _f_newindex(I::Tuple{}, keep::Tuple{}, Idefault::Tuple{}) = ()
+# Dropping dims. Defaults does nothing here.
+@inline function _f_newindex(I, keep::Tuple, Idefault::Tuple)
+    if keep[1]
+        return (I[1], _f_newindex(Base.tail(I), Base.tail(keep), Base.tail(Idefault))...)
+    else
+        return _f_newindex(Base.tail(I), Base.tail(keep), Base.tail(Idefault))
+    end
+end

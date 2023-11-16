@@ -112,10 +112,6 @@ function visit(sym::Symbol, loc)
     end
 end
 
-function visit(sym::String, loc)
-    return foast.Name(id=sym, location=loc)
-end
-
 # Called when Symbol is a Unary, Binary or Compare Operation
 function visit(sym::Symbol)
     return visit_(Val{sym}())
@@ -279,10 +275,12 @@ function visit_(sym::Val{:call}, args::Array, outer_loc)
         )
     elseif args[1] in disallowed_op
         throw("The function $(args[1]) is currently not supported by gt4py.")
+    elseif args[1] == :slice  # TODO: What to do here?
+        return visit(args[2], outer_loc)
     else
         if args[1] == :astype args[2], args[3] = args[3], args[2] end
         return foast.Call(
-            func=visit(string(args[1]), outer_loc),
+            func=visit(args[1], outer_loc),
             args=[visit(x, outer_loc) for x in Base.tail(Tuple(args)) if (typeof(x) != Expr || x.head != :(kw))],
             kwargs=Dict(x.args[1] => visit(x.args[2], outer_loc) for x in Base.tail(Tuple(args)) if (typeof(x) == Expr && x.head == :kw)),
             location=outer_loc,
@@ -398,18 +396,16 @@ function get_location(linenuno::LineNumberNode)
 end
 
 function from_type_hint(sym::Symbol, closure_vars::Dict)
-    if typeof(closure_vars[sym]) == DataType
-        if closure_vars[sym] <: Dimension
-            throw("Dimensions are not valid function arguments")
-        else 
-            try
-                return ts.ScalarType(kind=scalar_types[sym])
-            catch
-                throw("Non-trivial dtypes like $(sym) are not yet supported.")
-            end
-        end
-    else
+    if sym == :Dimension || sym == :FieldOffset || sym == :Connectivity
+        throw("$(string(sym)) is not a valid function argument")
+    elseif sym == :Field
         throw("Feature not supported by gt4py. Needs parametric type specification. ")
+    else
+        if sym in keys(scalar_types)
+            return ts.ScalarType(kind=scalar_types[sym])
+        else
+            throw("Non-trivial dtypes like $(sym) are not yet supported.")
+        end
     end
 end
 

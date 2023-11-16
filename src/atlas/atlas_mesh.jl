@@ -1,36 +1,28 @@
 ENV["PYCALL_JL_RUNTIME_PYTHON"] = Sys.which("python3.10")
+ENV["PYTHONBREAKPOINT"] = "pdb.set_trace"
 
 using PyCall
 
 atlas = pyimport("atlas4py")
-py"""
-from atlas4py import (
-    StructuredGrid,
-    Topology,
-    Config,
-    StructuredMeshGenerator,
-    functionspace,
-    build_edges,
-    build_node_to_edge_connectivity,
-    build_node_to_cell_connectivity,
-    build_element_to_edge_connectivity,
-    build_median_dual_mesh,
-    build_periodic_boundaries,
-    build_halo,
-    build_parallel_fields,
-    BlockConnectivity,
-)
-"""
+gtx = pyimport("gt4py.next")
 
+# Use when Atlas is a module
+# const atlas = PyNULL()
+# const gtx = PyNULL()
+
+# function __init__()
+#     copy!(atlas, pyimport("atlas4py"))
+#     copy!(gtx, pyimport("gt4py.next"))
+# end
 
 const rpi = 2.0 * asin(1.0)
 const _deg2rad = 2.0 * rpi / 360.0
 
-const DIMENSION_TO_SIZE_ATTR = Dict{Dimension, String}(
-        Vertex => "num_vertices",
-        Edge => "num_edges",
-        Cell => "num_cells",
-        K => "num_level"
+const DIMENSION_TO_SIZE_ATTR = Dict{Dimension, Symbol}(
+        Vertex => :num_vertices,
+        Edge => :num_edges,
+        Cell => :num_cells,
+        K => :num_level
 )
 
 const SKIP_NEIGHBOR_INDICATOR = -1
@@ -43,11 +35,11 @@ function _atlas_connectivity_to_array(atlas_conn; out = nothing)
 
         for i in 1:atlas_conn.rows
             for nb in 1:atlas_conn.cols
-                out[i, nb] = atlas_conn[i, nb]
+                out[i, nb] = atlas_conn[i, nb]  
             end
         end
 
-        return out
+        return out .+ 1 # for julia indexing
     end
 
     shape = (atlas_conn.rows, atlas_conn.maxcols)
@@ -57,34 +49,27 @@ function _atlas_connectivity_to_array(atlas_conn; out = nothing)
     for i in 1:atlas_conn.rows
         cols = atlas_conn.cols(i-1)
         for nb in 1:cols
-            out[i, nb] = atlas_conn[i, nb]
+            out[i, nb] = atlas_conn[i, nb] + 1 # for julia indexing
         end
         out[i, (cols+1):end] .= SKIP_NEIGHBOR_INDICATOR
     end
 
-    return out
+    return out  
 end
 
-py"""
-def _build_atlas_mesh(config, grid, periodic_halos=None):
-    # compare https://github.com/ckuehnlein/FVM_BESPOKE_NWP/blob/bespoke_nwp/src/fvm/core/datastruct_module.F90#L353
-    mesh = StructuredMeshGenerator(config).generate(grid)
+function _build_atlas_mesh(config, grid; periodic_halos=py"None"o)
 
-    # note: regularly the following calls are done implicitly using
-    functionspace.EdgeColumns(mesh, halo=periodic_halos)
-    functionspace.NodeColumns(mesh, halo=periodic_halos)
-    # if periodic_halos:
-    #    build_parallel_fields(mesh)
-    #    build_periodic_boundaries(mesh)
-    #    build_halo(mesh, periodic_halos)
+    mesh = atlas.StructuredMeshGenerator(config).generate(grid)
 
-    # build_edges(mesh, config)
-    build_node_to_edge_connectivity(mesh)
-    build_node_to_cell_connectivity(mesh)
-    build_median_dual_mesh(mesh)
+    atlas.functionspace.EdgeColumns(mesh, halo=periodic_halos)
+    atlas.functionspace.NodeColumns(mesh, halo=periodic_halos)
+
+    atlas.build_node_to_edge_connectivity(mesh)
+    atlas.build_node_to_cell_connectivity(mesh)
+    atlas.build_median_dual_mesh(mesh)
 
     return mesh
-"""
+end
 
 struct AtlasMesh
     num_vertices::Integer
@@ -147,7 +132,7 @@ struct AtlasMesh
 
     dual_face_orientation_np::Array
 
-    offset_provider::Dict{String, Union{Connectivity}}
+    offset_provider::Dict{String, Union{Connectivity, Dimension}}
 
     grid_description::String  # string representation of the atlas grid instance
 
@@ -156,17 +141,14 @@ struct AtlasMesh
 
     function AtlasMesh(grid; num_level::Integer, radius=6371.22e03, config=nothing)::AtlasMesh
         if isnothing(config)
-            py"""
-            config = Config()
-            config["triangulate"] = False
-            config["angle"] = -1.0
-            config["pole_edges"] = True
-            config["ghost_at_end"] = True 
-            """
-            config = py"config"
+            config = atlas.Config()
+            config.__setitem__("triangulate", false)
+            config.__setitem__("angle", -1.0)
+            config.__setitem__("pole_edges", true)
+            config.__setitem__("ghost_at_end", true)
         end
         # generate mesh from grid points    
-        mesh = py"_build_atlas_mesh"(config, grid, periodic_halos=10)
+        mesh = _build_atlas_mesh(config, grid, periodic_halos=10)
 
         num_cells = mesh.cells.size
         num_edges = mesh.edges.size
@@ -185,19 +167,11 @@ struct AtlasMesh
         # connectivities
         v2e_np = _atlas_connectivity_to_array(mesh.nodes.edge_connectivity)
         v2c_np = _atlas_connectivity_to_array(mesh.nodes.cell_connectivity)
-        v2v_np = zeros(Integer, size(v2e_np))  # initialized further below
+        v2v_np = ones(Integer, size(v2e_np))  # initialized further below
         e2v_np = _atlas_connectivity_to_array(mesh.edges.node_connectivity)
         e2c_np = _atlas_connectivity_to_array(mesh.edges.cell_connectivity)
         c2v_np = _atlas_connectivity_to_array(mesh.cells.node_connectivity)
         c2e_np = _atlas_connectivity_to_array(mesh.cells.edge_connectivity)
-
-        v2e_np .+= 1
-        v2c_np .+= 1 
-        v2v_np = ones(Integer, size(v2e_np))  # initialized further below
-        e2v_np .+= 1
-        e2c_np .+= 1
-        c2v_np .+= 1
-        c2e_np .+= 1
 
         @assert size(v2e_np)[1] == num_vertices
         @assert size(v2c_np)[1] == num_vertices
@@ -214,9 +188,9 @@ struct AtlasMesh
         c2v = Connectivity(c2v_np, Vertex, Cell, size(c2v_np)[2])
         c2e = Connectivity(c2e_np, Edge, Cell, size(c2e_np)[2])
 
-        vertex_remote_indices = mesh.nodes.field("remote_idx")
-        edge_remote_indices = mesh.edges.field("remote_idx")
-        cell_remote_indices = mesh.cells.field("remote_idx")
+        vertex_remote_indices = mesh.nodes.field("remote_idx") .+ 1
+        edge_remote_indices = mesh.edges.field("remote_idx") .+ 1
+        cell_remote_indices = mesh.cells.field("remote_idx") .+ 1
 
         # geometrical properties
         xydeg_np = mesh.nodes.lonlat
@@ -268,7 +242,7 @@ struct AtlasMesh
                     end
                 else
                     dual_face_orientation_np[v, e_nb] = NaN
-                    v2v_np[v, e_nb] = 0
+                    v2v_np[v, e_nb] = -1
                 end
             end
         end
@@ -284,7 +258,7 @@ struct AtlasMesh
         vol = Field(Vertex, vol_np)
 
         # offset_provider
-        offset_provider = Dict{String, Union{Connectivity}}(
+        offset_provider = Dict{String, Union{Connectivity, Dimension}}(
             "V2V" => v2v,
             "V2E" => v2e,
             "E2V" => e2v,
@@ -379,5 +353,15 @@ function info(atlas_mesh::AtlasMesh)
       cells:    $(rpad(string(atlas_mesh.num_cells), n))
       level:    $(rpad(string(atlas_mesh.num_level), n))
     """
+end
+
+
+function update_periodic_layers(mesh::AtlasMesh, field::Field)
+    horizontal_dimension = field.broadcast_dims[1]
+    @assert get_dim_kind(horizontal_dimension) == HORIZONTAL
+    remote_indices = mesh.remote_indices[horizontal_dimension]
+
+    periodic_indices = findall(remote_indices .!= collect(1:getproperty(mesh, DIMENSION_TO_SIZE_ATTR[horizontal_dimension])))
+    field[periodic_indices, :] .= field[remote_indices[periodic_indices], :]
 end
 

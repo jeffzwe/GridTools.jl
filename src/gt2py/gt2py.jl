@@ -1,6 +1,6 @@
 # Imports ---------------------------------------------------------------------------------
 ENV["PYCALL_JL_RUNTIME_PYTHON"] = Sys.which("python3.10")
-# ENV["PYTHONBREAKPOINT"] = "pdb.set_trace"
+ENV["PYTHONBREAKPOINT"] = "pdb.set_trace"
 
 using PyCall
 using MacroTools
@@ -68,7 +68,7 @@ include("jast_to_foast.jl")
 # Utils ------------------------------------------------------------------------------------
 
 bin_op = Set([:(+), :(-), :(*), :(/), :(÷), :(^), :(%), :(&), :(|), :(⊻), :.+, :.-, :.*, :./, :.÷, :.^, :.%, :.&, :.|, :.⊻])
-unary_op = Set([:(!), :(~), :.!, :.~])
+unary_op = Set([:(!), :(~), :.!, :.~, :(:)])       # TODO: Handle field splicing aka view()
 comp_op = Set([:(==), :(!=), :(<), :(<=), :(>), :(>=), :.==, :.!=, :.<, :.<=, :.>, :.>=])
 
 math_ops = union(bin_op, unary_op, comp_op)
@@ -82,7 +82,9 @@ builtin_op = Dict(
     :where => GridTools.where,
     :neighbor_sum => neighbor_sum,
     :convert => convert,
+    :slice => nothing,   # TODO: how do we handle this?
     # :as_offset => gtx.as_offset,
+    :pi => pi,
     :sin => sin,
     :cos => cos,
     :tan => tan,
@@ -108,7 +110,9 @@ builtin_op = Dict(
     :isinf => isinf,
     :isnan => isnan,
     :min => min,
-    :max => max
+    :max => max,
+    Symbol("@bp") => nothing,
+    Symbol("@run") => nothing
     )
 
 CLOSURE_VARS::Dict = Dict()
@@ -163,9 +167,7 @@ end
 function postprocess_definition(foast_node, closure_vars, annotations)
     foast_node = ClosureVarFolding.apply(foast_node, closure_vars)
     foast_node = DeadClosureVarElimination.apply(foast_node)
-    @bp
     foast_node = ClosureVarTypeDeduction.apply(foast_node, closure_vars)
-
     foast_node = FieldOperatorTypeDeduction.apply(foast_node)
     foast_node = UnpackedAssignPass.apply(foast_node)
 
@@ -188,25 +190,34 @@ function convert_type(a)
         b_dims = []
         for dim in a.broadcast_dims
             kind = py_dim_kind[(get_dim_kind(dim))]
-            push!(b_dims, gtx.Dimension(string(get_dim_name(dim))[1:end-1], kind = kind))      #TODO this requires strict naming rules for dimensions... not sure if we want that
+            push!(b_dims, gtx.Dimension(get_dim_name(dim), kind = kind))      #TODO this requires strict naming rules for dimensions... not sure if we want that
         end
+
+        offset = Dict()
 
         if typeof(a.data) <: Array
             new_data = a.data
+        elseif typeof(a.data) <: OffsetArray
+            for i in 1:length(b_dims)
+                offset[b_dims[i]] = minimum(axes(a)[i])
+            end
+            new_data = np.asarray(a.data) # TODO: OffsetArrays are converted to lists instead of np.arrays. Data must be copied which affects performance. Maybe there's a way?
         else
             new_data = np.asarray(a.data)
-            @warn "Dtype of the Field: $a is not concrete or contains an OffsetArray. Data must be copied to Python which may affect performance. Try using dtypes <: Array."
+            @warn "Dtype of the Field: $a is not concrete. Data must be copied to Python which may affect performance. Try using dtypes <: Array."
         end
 
-        return gtx.np_as_located_field(Tuple(b_dims)...)(new_data)
+        # return gtx.as_field(b_dims, new_data, origin = offset)        # TODO: change as soon as np_as_located_field is depricated
+        # return gtx.np_as_located_field(b_dims..., origin=offset)(new_data)
+        return gtx.np_as_located_field(b_dims...)(new_data)
 
     elseif typeof(a) <: Connectivity
     
         source_kind = py_dim_kind[(get_dim_kind(a.source))]
-        source_dim  = gtx.Dimension(string(get_dim_name(a.source))[1:end-1], kind=source_kind)
+        source_dim  = gtx.Dimension(get_dim_name(a.source), kind=source_kind)
         
         target_kind = py_dim_kind[(get_dim_kind(a.target))]
-        target_dim = gtx.Dimension(string(get_dim_name(a.target))[1:end-1], kind=target_kind)
+        target_dim = gtx.Dimension(get_dim_name(a.target), kind=target_kind)
 
         @assert typeof(a.data) <: Array "Use concrete types for the data Array of the following Connectivity: $a."
 
@@ -297,6 +308,7 @@ function init_py_utils()
     :neighbor_sum => gtx.neighbor_sum,
     :convert => gtx.astype,
     # :as_offset => gtx.as_offset,
+    :pi => np.pi,
     :sin => gtx.sin,
     :cos => gtx.cos,
     :tan => gtx.tan,

@@ -13,12 +13,12 @@ using Profile
 using Base: @propagate_inbounds
 using MacroTools
 using OffsetArrays
-using OffsetArrays: IdOffsetRange
+using OffsetArrays: IdOffsetRange, no_offset_view
 using Debugger
 
 import Base.Broadcast: Extruded, Style, BroadcastStyle, ArrayStyle ,Broadcasted
 
-export Dimension, DimensionKind, HORIZONTAL, VERTICAL, LOCAL, Field, FieldShape, shape, Connectivity, FieldOffset, neighbor_sum, max_over, min_over, where, @field_operator, @module_vars, get_dim_name, get_dim_kind
+export Dimension, DimensionKind, HORIZONTAL, VERTICAL, LOCAL, Field, Connectivity, FieldOffset, neighbor_sum, max_over, min_over, where, @field_operator, @module_vars, get_dim_name, get_dim_kind, slice
 
 
 # Lib ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -46,9 +46,10 @@ struct Dimension{name, kind <: DimensionKind} end
 
 Base.length(d::Dimension) = 1
 Base.iterate(d::Dimension, state=1) = state==1 ? (d, state+1) : nothing
-Base.getindex(d::Dimension, offset::Integer) = d, offset
-get_dim_name(d::Dimension) = typeof(d).parameters[1]
+Base.getindex(d::Dimension, offset::Integer) = d, offset            # TODO: Unnecessary?
+get_dim_name(d::Dimension) = string(typeof(d).parameters[1])[1:end-1]
 get_dim_kind(d::Dimension) = typeof(d).parameters[2]
+get_dim_ind(source::Tuple{Vararg{Dimension}}, ind::Dimension) = findfirst(x -> x == ind, source)
 
 # FieldOffset struct -------------------------------------------------------------
 
@@ -65,12 +66,12 @@ FieldOffset("V2E", (Edge_(),), (Vertex_(), V2EDim_()))
 """
 struct FieldOffset
     name::String
-    source::Tuple{Vararg{Dimension}}
+    source::Dimension          # TODO: can source have multiple dimensions?
     target::Tuple{Vararg{Dimension}}
 
-    function FieldOffset(name::String; source::Union{Dimension, Tuple{Vararg{Dimension}}}, target::Union{Dimension, Tuple{Vararg{Dimension}}})::FieldOffset
-        if length(target) == 2 @assert typeof(target[2]).parameters[2] == LOCAL ("Second dimension in offset must be a local dimension.") end
-        new(name, Tuple(source), Tuple(target))
+    function FieldOffset(name::String; source::Dimension, target::Union{Dimension, Tuple{Vararg{Dimension}}})::FieldOffset
+        if length(target) > 1 @assert all(get_dim_kind.(Base.tail(target)) .== LOCAL) ("All but the first dimension in an offset must be local dimensions.") end
+        new(name, source, Tuple(target))
     end
 end
 
@@ -112,55 +113,76 @@ julia> field(E2C(1))
 ...
 ```
 """
-# TODO sequence of types: Do BD, T, N
+# TODO sequence of types: Do BD, T, N. 
+# Error showing value of type Field{Tuple{Dimension{:Cell_, HORIZONTAL}, Dimension{:K_, HORIZONTAL}}, Float64, 2, Tuple{Dimension{:Cell_, HORIZONTAL}, Dimension{:K_, HORIZONTAL}}}:
+# ERROR: CanonicalIndexError: getindex not defined for Field{Tuple{Dimension{:Cell_, HORIZONTAL}, Dimension{:K_, HORIZONTAL}}, Float64, 2, Tuple{Dimension{:Cell_, HORIZONTAL}, Dimension{:K_, HORIZONTAL}}}
+
 # TODO add indexing of arrays to Field. No more OffsetArrays
-struct Field{T <: Union{AbstractFloat, Integer, Bool}, N, BD <: Tuple{Vararg{Dimension}}, D <: Tuple{Vararg{Dimension}}} <: AbstractArray{T,N}
+struct Field{T <: Union{AbstractFloat, Integer}, N, BD <: Tuple{Vararg{Dimension}}, D <: Tuple{Vararg{Dimension}}} <: AbstractArray{T,N}
     dims::D
     data::AbstractArray{T,N}
     broadcast_dims::BD
     
-    function Field(dims::D, data::AbstractArray{T,N}, broadcast_dims::BD = dims) where {T <: Union{AbstractFloat, Integer, Bool}, N, BD <: Tuple{Vararg{Dimension}}, D <: Tuple{Vararg{Dimension}}}
+    function Field(dims::D, data::AbstractArray{T,N}, broadcast_dims::BD = dims) where {T <: Union{AbstractFloat, Integer}, N, BD <: Tuple{Vararg{Dimension}}, D <: Tuple{Vararg{Dimension}}}
         if ndims(data) != 0 @assert length(dims) == ndims(data) end
         return new{T,N,BD,D}(dims, data, broadcast_dims)
     end
 
-    function Field(dim::Dimension, data::AbstractArray{T,N}, broadcast_dims::Union{Dimension,BD} = dim) where {T <: Union{AbstractFloat, Integer, Bool}, N, BD <: Tuple{Vararg{Dimension}}}
+    function Field(dim::Dimension, data::AbstractArray{T,N}, broadcast_dims::Union{Dimension,BD} = dim) where {T <: Union{AbstractFloat, Integer}, N, BD <: Tuple{Vararg{Dimension}}}
         if ndims(data) != 0 @assert ndims(data) == 1 end
         return Field(Tuple(dim), data, Tuple(broadcast_dims))
     end
 end
 
 # Call functions to Field struct #TODO Add to documentation of Field
-(field_call::Field)(t::Tuple{FieldOffset, <:Integer})::Field = field_call(t...)
-function (field_call::Field)(f_off::FieldOffset, ind::Union{<:Integer, Nothing} = nothing)::Field
+(field_call::Field)(f_off::Tuple{FieldOffset, <:Integer})::Field = field_call(f_off...)
+function (field_call::Field)(f_off::FieldOffset, ind::Integer = 0)::Field
 
     conn = OFFSET_PROVIDER[f_off.name]
 
-    conn_data = isnothing(ind) ? conn.data : conn.data[:,ind]
-    f_target = isnothing(ind) ? f_off.target : f_off.target[1]
+    if typeof(conn) <: Dimension
+        new_size = zeros(Integer, length(axes(field_call.data)))
+        new_size[get_dim_ind(field_call.dims, conn)] = ind
+        return Field(field_call.dims, OffsetArray(field_call.data, new_size...), field_call.broadcast_dims)
+    elseif typeof(conn) <: Connectivity
 
-    @assert maximum(conn_data) <= size(field_call)[1] && minimum(conn_data) >= 0
-    @assert all(x -> x in f_off.source, conn.source) && all(x -> x in f_off.target, conn.target)
+        conn_data = ind == 0 ? no_offset_view(conn.data) : no_offset_view(conn.data)[:,ind]
+        f_target = ind == 0 ? f_off.target : f_off.target[1]
 
-    if ndims(field_call) == 1
-        res = map(x -> x == 0 ? convert(eltype(field_call), 0) : getindex(field_call, Int.(x)), conn_data)
+        conn_ind = get_dim_ind(field_call.dims, f_off.source)
+
+        @assert maximum(conn_data) <= maximum(axes(field_call)[conn_ind]) && !any(x -> x == 0, conn_data) && minimum(conn_data) > -2 "Indices of Connectivity $f_off are out of range for the called field"
+        @assert all(x -> x in f_off.source, conn.source) && all(x -> x in f_off.target, conn.target) "Source or target dimensions of Connectivity $f_off do not match the called field"     
+        
+        if ndims(field_call) == 1
+            res = map(x -> x == -1 ? convert(eltype(field_call), 0) : getindex(field_call, Int.(x)), conn_data)
+        else
+            f(slice) = map(x -> x == -1 ? convert(eltype(field_call), 0) : getindex(slice, Int.(x)), conn_data)
+
+            # TODO: stimmt das überhaupt???????????????????
+            sliced_data = eachslice(field_call.data, dims=Tuple(deleteat!(collect(1:ndims(field_call)), conn_ind)))
+            outsize = [size(field_call)...]
+            Tuple(splice!(outsize, conn_ind, [size(conn_data)...]))
+            res = reshape(hcat(map(f, sliced_data)...), Tuple(outsize))
+        end
+
+        # TODO: stimmt das überhaupt???????????????????
+        new_dims = [field_call.dims[1:conn_ind-1]..., f_target..., field_call.dims[conn_ind+1:end]...]
+
+        # TODO: stimmt das überhaupt???????????????????
+        return Field(Tuple(new_dims), res)
     else
-        f(slice) = map(x -> x == 0 ? convert(eltype(field_call), 0) : getindex(slice, Int.(x)), conn_data)
-        res = cat(map(f, eachslice(field_call.data, dims=2))...,dims=ndims(conn_data)+1)
+        throw("The datatype: $(typeof(conn)) is not supported for within an offset_provider")
     end
-
-    dims = deleteat!([field_call.dims...], findall(x->x in f_off.source, [field_call.dims...]))
-    dims = tuple(f_target..., dims...)
-
-    return Field(dims, res)
 end
 
-function (field_call::Field)(t::Tuple{<:Dimension, <:Integer})::Field
-    dim_ind = findall(x -> x == t[1], field_call.dims)[1]
-    new_size = zeros(Integer, length(axes(field_call.data)))
-    new_size[dim_ind] = t[2]
-    return Field(field_call.dims, OffsetArray(field_call.data, new_size...), field_call.broadcast_dims)
-end
+
+# TODO: Needed? Sincd the field should be called by an offset which then points to a dimension
+# function (field_call::Field)(dim_in::Tuple{<:Dimension, <:Integer})::Field
+#     new_size = zeros(Integer, length(axes(field_call.data)))
+#     new_size[get_dim_ind(field_call.dims, dim_in[1])] = dim_in[2]
+#     return Field(field_call.dims, OffsetArray(field_call.data, new_size...), field_call.broadcast_dims)
+# end
 
 # Field struct interfaces
 Base.size(F::Field)::Tuple = size(F.data)
@@ -169,11 +191,32 @@ Base.convert(t::Type{T}, F::Field) where {T<:Number} = Field(F.dims, convert.(t,
 @propagate_inbounds Base.getindex(F::Field{T,N}, inds::Vararg{Int,N}) where {T,N} = F.data[inds...]
 @propagate_inbounds Base.setindex!(F::Field{T,N}, val, inds::Vararg{Int,N}) where {T,N} = F.data[inds...] = val
 Base.showarg(io::IO, F::Field, toplevel) = print(io, eltype(F), " Field with dimensions ", get_dim_name.(F.broadcast_dims))
-
-function Base.promote(f1::Field, f2::Field)
-    f1_new_data, f2_new_data = promote(f1.data, f2.data)
-    return Field(f1.dims, f1_new_data, f1.broadcast_dims),Field(f2.dims, f2_new_data, f2.broadcast_dims)
+function Base.copyto!(target::Tuple{Vararg{Field}}, source::Tuple{Vararg{Field}})
+    for i in 1:length(target)
+        target[i] .= source[i]
+    end
 end
+function slice(F::Field, inds...)::Field
+    dim_ind = findall(x -> typeof(x) <: UnitRange{Int64}, inds)
+    return Field(F.dims[dim_ind], view(F.data, inds...), F.broadcast_dims)
+end
+
+
+
+# TODO: where doesnt allow mixed types. Should we promote mixed types or should we throw an error?
+
+# function Base.promote(f1::Field, f2::Field)
+#     f1_new_data, f2_new_data = promote(f1.data, f2.data)
+#     return Field(f1.dims, f1_new_data, f1.broadcast_dims), Field(f2.dims, f2_new_data, f2.broadcast_dims)
+# end
+
+# function Base.promote(scal::Real, f::Field)
+
+# end
+
+# function Base.promote(f::Field, scal::Real)
+
+# end
 
 # Connectivity struct ------------------------------------------------------------
 
@@ -182,11 +225,8 @@ end
 
 # Examples
 ```julia-repl
-julia> new_connectivity = Connectivity(fill(1, (3,2)), Cell, (Edge, E2C), 2)
-3x2  Field with dims (Main.GridTools.Cell_(), Main.GridTools.K_()) and broadcasted_dims (Main.GridTools.Cell_(), Main.GridTools.K_()):
- 1  1
- 1  1
- 1  1
+julia> new_connectivity = Connectivity(fill(1, (3,2)), Cell, Edge, 2)
+Connectivity(Integer[1 1; 1 1; 1 1], Dimension{:Cell_, HORIZONTAL}(), Dimension{:Edge_, HORIZONTAL}(), 2
 ```
 """
 struct Connectivity
@@ -205,33 +245,32 @@ struct FieldOp
     closure_vars::Dict
 end
 
-OFFSET_PROVIDER::Union{Dict{String, Connectivity}, Nothing} = nothing
+OFFSET_PROVIDER::Union{Dict{String, Union{Connectivity, Dimension}}, Nothing} = nothing
 FIELD_OPERATORS::Dict{Symbol, FieldOp} = Dict{Symbol, FieldOp}()
 
-function (fo::FieldOp)(args...; offset_provider::Dict{String, Connectivity} = Dict{String, Connectivity}(), backend::String = "embedded", out = nothing, kwargs...)
+function (fo::FieldOp)(args...; offset_provider::Dict{String, Union{Connectivity, Dimension}} = Dict{String, Union{Connectivity, Dimension}}(), backend::String = "embedded", out = nothing, kwargs...)
 
     FIELD_OPERATORS[fo.name] = fo
 
-    is_outermost_fo = isnothing(GridTools.OFFSET_PROVIDER)
+    is_outermost_fo = isnothing(OFFSET_PROVIDER)
     if is_outermost_fo
         @assert !isnothing(out) "Must provide an out field."
-        @assert typeof(out) <: Field "Out argument is not a field."
+        @assert typeof(out) <: Field || typeof(out) <: Tuple{Vararg{Field}} "Out argument is not a field."
         global OFFSET_PROVIDER = offset_provider
+        out = backend_execution(Val{Symbol(backend)}(), fo, args, kwargs, out, is_outermost_fo)
+        global OFFSET_PROVIDER = nothing
     else
         @assert isnothing(out)
         @assert isempty(offset_provider)
+        out = backend_execution(Val{Symbol(backend)}(), fo, args, kwargs, out, is_outermost_fo)
     end
 
-    try
-        return GridTools.backend_execution(Val{Symbol(backend)}(), fo, args, kwargs, out, is_outermost_fo)
-    finally
-        global OFFSET_PROVIDER = nothing
-    end
+    return out
 end
 
 function backend_execution(backend::Val{:embedded}, fo::FieldOp, args, kwargs, out, is_outermost_fo)
     if is_outermost_fo
-        out .= fo.f(args...; kwargs...)
+        copyto!(out, fo.f(args...; kwargs...))
         return
     else
         return fo.f(args...; kwargs...)

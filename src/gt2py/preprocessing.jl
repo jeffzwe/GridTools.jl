@@ -42,8 +42,8 @@ function translate_closure_vars(j_closure_vars::Dict)::Dict
         new_value = nothing
 
         if typeof(value) <: FieldOffset
-            py_source = map(dim -> gtx.Dimension(string(get_dim_name(dim))[1:end-1], kind=py_dim_kind[get_dim_kind(dim)]), value.source)
-            py_target = map(dim -> gtx.Dimension(string(get_dim_name(dim))[1:end-1], kind=py_dim_kind[get_dim_kind(dim)]), value.target)
+            py_source = map(dim -> gtx.Dimension(get_dim_name(dim), kind=py_dim_kind[get_dim_kind(dim)]), value.source)
+            py_target = map(dim -> gtx.Dimension(get_dim_name(dim), kind=py_dim_kind[get_dim_kind(dim)]), value.target)
             new_value = gtx.FieldOffset(
                 value.name, 
                 source= length(py_source) == 1 ? py_source[1] : py_source, 
@@ -54,6 +54,8 @@ function translate_closure_vars(j_closure_vars::Dict)::Dict
 
         elseif typeof(value) <: FieldOp 
             new_value = py_field_operator(value)
+        elseif typeof(value) <: Dimension
+            new_value = gtx.Dimension(get_dim_name(value), kind=py_dim_kind[get_dim_kind(value)])
         elseif typeof(value) <: DataType
             if value <: Dimension
                 new_value = gtx.Dimension(string(value.parameters[1])[1:end-1], kind=py_dim_kind[value.parameters[2]])
@@ -63,7 +65,7 @@ function translate_closure_vars(j_closure_vars::Dict)::Dict
             end
         elseif false #isconst(CURRENT_MODULE, Symbol(value))  
             # TODO handle constants with FrozenNameSpace...
-        else 
+        else
             throw("Access to following type: $(typeof(value)) is not permitted within a field operator.")
         end
         py_closure_vars[string(key)] = new_value

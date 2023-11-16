@@ -6,7 +6,7 @@ struct Metric
     gac::Field{<:AbstractFloat, 1, Tuple{Vertex_}}
 end
 
-function M_from_mesh(mesh::AtlasMesh)
+function m_from_mesh(mesh::AtlasMesh)
     rsina = sin.(mesh.xyrad[:, 2])
     rcosa = cos.(mesh.xyrad[:, 2])
 

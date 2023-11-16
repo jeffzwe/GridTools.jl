@@ -62,26 +62,62 @@ cell_to_edge_table = [
     [6   7  12]
 ]
 
+cell_values = Field(Cell, [5., 6., 7., 8., 3., 4., 5., 7., 4., 3., 2., 4., 6., 7., 5., 3., 2., 2., 5.])
+
 E2C_offset_provider = Connectivity(edge_to_cell_table, Cell, Edge, 2)
 C2E_offset_provider = Connectivity(cell_to_edge_table, Edge, Cell, 3)
 
-offset_provider = Dict{String, Connectivity}(
+offset_provider = Dict{String, Union{Connectivity, Dimension}}(
                    "E2C" => E2C_offset_provider,
                    "C2E" => C2E_offset_provider
                 )
 
 
-@field_operator function nested_add(a::Field{Float64, 1, Tuple{Cell_}}, b::Field{Float64, 1, Tuple{Cell_}})::Field{Float64, 1, Tuple{Cell_}}
-    return a .+ b
-end
+# @field_operator function nested_add(a::Field{Float64, 1, Tuple{Cell_}}, b::Field{Float64, 1, Tuple{Cell_}})::Field{Float64, 1, Tuple{Cell_}}
+#     return a .+ b
+# end
 
-a = Field(Cell, collect(1.:15.))
-b = Field(Cell, ones(15))
-out = Field(Cell, zeros(15))
+# a = Field(Cell, collect(1.:15.))
+# b = Field(Cell, ones(15))
+# out = Field(Cell, zeros(15))
 
-@field_operator function test_addition(a::Field{Float64, 1, Tuple{Cell_}}, b::Field{Float64, 1, Tuple{Cell_}})::Field{Float64, 1, Tuple{Cell_}}
-    res = nested_add(a, b)
-    return sin.(res)
-end
+# @field_operator function test_addition(a::Field{Float64, 1, Tuple{Cell_}}, b::Field{Float64, 1, Tuple{Cell_}})::Field{Float64, 1, Tuple{Cell_}}
+#     res = nested_add(a, b)
+#     return sin.(res)
+# end
 
-test_addition(a, b, out = out, backend="py")
+# test_addition(A, B, out = out, backend="py")
+
+# out = Field((Edge), zeros(12))
+
+# @field_operator function hoi(x::Field{Float64, 1, Tuple{Cell_,}})::Field{Float64, 1, Tuple{Edge_,}}
+#         return x(E2C[1])
+# end
+
+# @run hoi(cell_values, out = out, offset_provider=offset_provider)
+
+# x = Field((Cell, K, Edge), reshape(collect(1.:36.), (3, 6, 2)))
+# k_values = [[2 4];[3 5];[4 6];[1 6];[2 5];[3 4]]
+
+# Kf_ = Dimension{:Kf_, HORIZONTAL}
+# Kff_ = Dimension{:Kff_, LOCAL}
+# Kf = Kf_()
+# Kff = Kff_()
+# KK = FieldOffset("KK", source=K, target=(Kf, Kff))
+# K2f = Connectivity(k_values, K, Kf, 2)
+# offset_provider = Dict{String, Connectivity}("KK" => K2f)
+
+# @field_operator function hoi(x::Field{Float64, 3, Tuple{Cell_, K_, Edge_}}) 
+#     return x(KK)
+# end
+
+# @run hoi(x, out=out, offset_provider= offset_provider)
+
+
+
+
+
+
+
+
+

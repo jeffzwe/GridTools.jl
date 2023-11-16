@@ -8,7 +8,7 @@ function Base.broadcast(f::Field, b_dims::D)::Field where D <: Tuple{Vararg{Dime
     return Field(f.dims, f.data, b_dims)
 end
 
-function Base.broadcast(n::Number, b_dims::D)::Field where D <: Tuple{Vararg{Dimension}}
+function Base.broadcast(n::Number, b_dims::Union{D, Dimension})::Field where D <: Tuple{Vararg{Dimension}}
     return Field((), fill(n), b_dims)
 end
 
@@ -72,4 +72,7 @@ The `where` function builtin also allows for nesting of tuples. In this scenario
 `where(mask, ((a, b), (b, a)), ((c, d), (d, c)))` -->  `where(mask, (a, b), (c, d))` and `where(mask, (b, a), (d, c))` and then combine results to match the return type:
 """
 where(mask::Field, t1::Tuple, t2::Tuple)::Field = map(x -> where(mask, x[1], x[2]), zip(t1, t2))
-@inbounds where(mask::Field, a::Union{Field, Real}, b::Union{Field, Real})::Field = ifelse.(mask, promote(a, b)...)
+@inbounds function where(mask::Field, a::Union{Field, Real}, b::Union{Field, Real})::Field 
+    @assert eltype(a) == eltype(b) "The true and false branch of a where statment need to have the same type: Got $(eltype(a)) and $(eltype(b))"
+    return ifelse.(mask, a, b)
+end

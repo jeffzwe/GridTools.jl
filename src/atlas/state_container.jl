@@ -8,9 +8,9 @@ struct StateContainer
     }
 end
 
-function SC_from_mesh(mesh::AtlasMesh)
-    vertex_dim = getfield(mesh, Symbol(DIMENSION_TO_SIZE_ATTR[Vertex]))
-    k_dim = getfield(mesh, Symbol(DIMENSION_TO_SIZE_ATTR[K]))
+function sc_from_mesh(mesh::AtlasMesh)
+    vertex_dim = getproperty(mesh, DIMENSION_TO_SIZE_ATTR[Vertex])
+    k_dim = getproperty(mesh, DIMENSION_TO_SIZE_ATTR[K])
     return StateContainer(
         Field((Vertex, K), zeros((vertex_dim, k_dim))),
         (
@@ -20,5 +20,3 @@ function SC_from_mesh(mesh::AtlasMesh)
         )
     )
 end
-
-    
