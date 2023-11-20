@@ -2,15 +2,17 @@ using OffsetArrays
 using Debugger
 using GridTools
 
+# When creating a local Dimension as V2VDim than the name of the Dimension must match the FieldOffset it will be used in. I.e. V2VDim_ = Dimension{:V2V_, LOCAL}
+
 Cell_ = Dimension{:Cell_, HORIZONTAL}
 K_ = Dimension{:K_, HORIZONTAL}
 Edge_ = Dimension{:Edge_, HORIZONTAL}
 Vertex_ = Dimension{:Vertex_, HORIZONTAL}
-V2VDim_ = Dimension{:V2VDim_, LOCAL}
-V2EDim_ = Dimension{:V2EDim_, LOCAL} 
-E2VDim_ = Dimension{:E2VDim_, LOCAL} 
-E2CDim_ = Dimension{:E2CDim_, LOCAL}
-C2EDim_ = Dimension{:C2EDim_, LOCAL}
+V2VDim_ = Dimension{:V2V_, LOCAL}
+V2EDim_ = Dimension{:V2E_, LOCAL} 
+E2VDim_ = Dimension{:E2V_, LOCAL} 
+E2CDim_ = Dimension{:E2C_, LOCAL}
+C2EDim_ = Dimension{:C2E_, LOCAL}
 Cell = Cell_()
 K = K_()
 Edge = Edge_()
@@ -28,7 +30,7 @@ E2C = FieldOffset("E2C", source=Cell, target=(Edge, E2CDim))
 C2E = FieldOffset("C2E", source=Edge, target=(Cell, C2EDim))
 Koff = FieldOffset("Koff", source=K, target=K)
 
-a = Field((Cell, K), reshape(collect(-3.0:8.0), (6, 2)))
+a = Field((Vertex, K), reshape(collect(-3.0:8.0), (6, 2)))
 b = Field((K, Edge), reshape(collect(1.0:6.0), (2, 3)))
 
 A = Field((Vertex, K), OffsetArray(reshape(collect(1.:15.), 3, 5), -1:1, 0:4))
@@ -73,20 +75,33 @@ offset_provider = Dict{String, Union{Connectivity, Dimension}}(
                 )
 
 
-# @field_operator function nested_add(a::Field{Float64, 1, Tuple{Cell_}}, b::Field{Float64, 1, Tuple{Cell_}})::Field{Float64, 1, Tuple{Cell_}}
-#     return a .+ b
+# a = Field(Cell, collect(1.:15.))
+# out = Field(Cell, zeros(15))
+
+# @field_operator function fo_neighbor_sum(a::Field{Float64, 1, Tuple{Cell_}})::Field{Float64, 1, Tuple{Edge_}}
+#     return neighbor_sum(a(E2C), axis=E2CDim)
 # end
+
+# fo_neighbor_sum(a, offset_provider=offset_provider, backend = "py", out = out)
+
+
+@field_operator function nested_add(a::Field{Float64, 2, Tuple{Vertex_, K_}}, b::Field{Float64, 2, Tuple{K_, Edge_}})::Field{Float64, 3, Tuple{Vertex_, K_, Edge_}}
+    return a .+ b
+end
 
 # a = Field(Cell, collect(1.:15.))
 # b = Field(Cell, ones(15))
 # out = Field(Cell, zeros(15))
 
-# @field_operator function test_addition(a::Field{Float64, 1, Tuple{Cell_}}, b::Field{Float64, 1, Tuple{Cell_}})::Field{Float64, 1, Tuple{Cell_}}
-#     res = nested_add(a, b)
-#     return sin.(res)
-# end
+out = Field((Vertex, K, Edge), OffsetArray(zeros(3, 3, 2), -2, 0, 0))
+# out = Field((Vertex, K, Edge), zeros(6, 2, 3))
 
-# test_addition(A, B, out = out, backend="py")
+@field_operator function test_addition(a::Field{Float64, 2, Tuple{Vertex_, K_}}, b::Field{Float64, 2, Tuple{K_, Edge_}})::Field{Float64, 3, Tuple{Vertex_, K_, Edge_}}
+    res = nested_add(a, b)
+    return sin.(res)
+end
+
+test_addition(A, B, out = out, backend="py")
 
 # out = Field((Edge), zeros(12))
 

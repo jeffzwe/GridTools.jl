@@ -275,7 +275,7 @@ function visit_(sym::Val{:call}, args::Array, outer_loc)
         )
     elseif args[1] in disallowed_op
         throw("The function $(args[1]) is currently not supported by gt4py.")
-    elseif args[1] == :slice  # TODO: What to do here?
+    elseif args[1] == :slice  # TODO: What to do here? Current: pass unsliced field
         return visit(args[2], outer_loc)
     else
         if args[1] == :astype args[2], args[3] = args[3], args[2] end
@@ -422,7 +422,7 @@ function from_type_hint(expr::Expr, closure_vars::Dict)
 
         for d in dims.args[2:end]
             @assert string(d) in keys(closure_vars)
-            push!(dim, closure_vars[string(d)])     #TODO only works if we have strict naming sceme in julia
+            push!(dim, closure_vars[string(d)])
         end
 
         return ts.FieldType(dims=dim, dtype=ts.ScalarType(kind=scalar_types[dtype])) 

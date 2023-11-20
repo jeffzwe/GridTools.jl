@@ -1,6 +1,6 @@
 # Imports ---------------------------------------------------------------------------------
 ENV["PYCALL_JL_RUNTIME_PYTHON"] = Sys.which("python3.10")
-ENV["PYTHONBREAKPOINT"] = "pdb.set_trace"
+# ENV["PYTHONBREAKPOINT"] = "pdb.set_trace"
 
 using PyCall
 using MacroTools
@@ -68,7 +68,7 @@ include("jast_to_foast.jl")
 # Utils ------------------------------------------------------------------------------------
 
 bin_op = Set([:(+), :(-), :(*), :(/), :(÷), :(^), :(%), :(&), :(|), :(⊻), :.+, :.-, :.*, :./, :.÷, :.^, :.%, :.&, :.|, :.⊻])
-unary_op = Set([:(!), :(~), :.!, :.~, :(:)])       # TODO: Handle field splicing aka view()
+unary_op = Set([:(!), :(~), :.!, :.~, :(:)])
 comp_op = Set([:(==), :(!=), :(<), :(<=), :(>), :(>=), :.==, :.!=, :.<, :.<=, :.>, :.>=])
 
 math_ops = union(bin_op, unary_op, comp_op)
@@ -199,16 +199,18 @@ function convert_type(a)
             new_data = a.data
         elseif typeof(a.data) <: OffsetArray
             for i in 1:length(b_dims)
-                offset[b_dims[i]] = minimum(axes(a)[i])
+                offset[b_dims[i]] = minimum(axes(a)[i]) -1
             end
-            new_data = np.asarray(a.data) # TODO: OffsetArrays are converted to lists instead of np.arrays. Data must be copied which affects performance. Maybe there's a way?
+            
+            new_data = no_offset_view(a.data)
+            return gtx.np_as_located_field(b_dims..., origin=offset)(new_data)
+             # return gtx.as_field(b_dims, new_data, origin = offset)        # TODO: change as soon as np_as_located_field is depricated
         else
             new_data = np.asarray(a.data)
             @warn "Dtype of the Field: $a is not concrete. Data must be copied to Python which may affect performance. Try using dtypes <: Array."
         end
 
         # return gtx.as_field(b_dims, new_data, origin = offset)        # TODO: change as soon as np_as_located_field is depricated
-        # return gtx.np_as_located_field(b_dims..., origin=offset)(new_data)
         return gtx.np_as_located_field(b_dims...)(new_data)
 
     elseif typeof(a) <: Connectivity
@@ -223,7 +225,9 @@ function convert_type(a)
 
         # account for different indexing in python
         return gtx.NeighborTableOffsetProvider(a.data .- 1, target_dim, source_dim, a.dims)
-    else 
+    elseif typeof(a) <: Dimension
+        return gtx.Dimension(get_dim_name(a), kind=py_dim_kind[get_dim_kind(a)])
+    else
         @assert Symbol(typeof(a)) in keys(scalar_types) ("The type of argument $(a) is not a valid argument type to a field operator.")
         return a
     end

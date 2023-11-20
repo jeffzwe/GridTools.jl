@@ -76,3 +76,13 @@ where(mask::Field, t1::Tuple, t2::Tuple)::Field = map(x -> where(mask, x[1], x[2
     @assert eltype(a) == eltype(b) "The true and false branch of a where statment need to have the same type: Got $(eltype(a)) and $(eltype(b))"
     return ifelse.(mask, a, b)
 end
+
+
+function concat(f1::Field, f2::Field)
+    @assert all(xor.(isnan.(f1), isnan.(f2))) "The matrices $f1 and $f2 are not combineable in a concat operation due to overlapping values."
+    return concat_helper.(f1, f2)
+end
+
+function concat_helper(x, y)
+    return isnan(x) ? y : x
+end

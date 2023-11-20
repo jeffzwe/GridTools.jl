@@ -296,9 +296,8 @@ end
     dual_face_normal_weighted_x::Field{Float64, 1, Tuple{Edge_}},
     dual_face_normal_weighted_y::Field{Float64, 1, Tuple{Edge_}}
     )::Field{Float64, 2, Tuple{Vertex_, K_}}
-    vn = advector_normal(vel_x, vel_y, pole_edge_mask, dual_face_normal_weighted_x, dual_face_normal_weighted_y, backend="py")
-    flux = upwind_flux(rho, vn, backend = "py")
+    vn = advector_normal(vel_x, vel_y, pole_edge_mask, dual_face_normal_weighted_x, dual_face_normal_weighted_y)
+    flux = upwind_flux(rho, vn)
     rho = rho .- dt ./ (vol .* gac) .* neighbor_sum(flux(V2E) .* dual_face_orientation, axis=V2EDim)
     return rho
 end
-

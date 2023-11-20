@@ -7,11 +7,11 @@ Cell_ = Dimension{:Cell_, HORIZONTAL}
 K_ = Dimension{:K_, HORIZONTAL}
 Edge_ = Dimension{:Edge_, HORIZONTAL}
 Vertex_ = Dimension{:Vertex_, HORIZONTAL}
-V2VDim_ = Dimension{:V2VDim_, LOCAL}
-V2EDim_ = Dimension{:V2EDim_, LOCAL} 
-E2VDim_ = Dimension{:E2VDim_, LOCAL} 
-E2CDim_ = Dimension{:E2CDim_, LOCAL}
-C2EDim_ = Dimension{:C2EDim_, LOCAL}
+V2VDim_ = Dimension{:V2V_, LOCAL}
+V2EDim_ = Dimension{:V2E_, LOCAL} 
+E2VDim_ = Dimension{:E2V_, LOCAL} 
+E2CDim_ = Dimension{:E2C_, LOCAL}
+C2EDim_ = Dimension{:C2E_, LOCAL}
 Cell = Cell_()
 K = K_()
 Edge = Edge_()
@@ -31,6 +31,7 @@ include("atlas_mesh.jl")
 include("state_container.jl")
 include("metric.jl")
 include("advection.jl")
+
 
 grid = atlas.StructuredGrid("O32")
 mesh = AtlasMesh(grid, num_level = 30)
@@ -136,9 +137,9 @@ copyto!(state_next.vel, state.vel)
 tmp_fields["tmp_vertex_1"] .= reshape(collect(0.:mesh.num_level-1), (1, mesh.num_level))
 nabla_z(tmp_fields["tmp_vertex_1"], level_indices, mesh.num_level, out=tmp_fields["tmp_vertex_2"], offset_provider = mesh.offset_provider)
 
-for i in 1:niter
+println("Arrived at upwind iterations")
 
-    println(i)
+for i in 1:niter
 
     upwind_scheme(
         state.rho,
@@ -156,6 +157,8 @@ for i in 1:niter
         offset_provider = mesh.offset_provider,
         backend = "py"
     )
+
+    println("Finished $i. upwind")
 
     temp = state
     global state = state_next

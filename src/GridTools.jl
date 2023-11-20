@@ -18,7 +18,7 @@ using Debugger
 
 import Base.Broadcast: Extruded, Style, BroadcastStyle, ArrayStyle ,Broadcasted
 
-export Dimension, DimensionKind, HORIZONTAL, VERTICAL, LOCAL, Field, Connectivity, FieldOffset, neighbor_sum, max_over, min_over, where, @field_operator, @module_vars, get_dim_name, get_dim_kind, slice
+export Dimension, DimensionKind, HORIZONTAL, VERTICAL, LOCAL, Field, Connectivity, FieldOffset, neighbor_sum, max_over, min_over, where, concat, @field_operator, @module_vars, get_dim_name, get_dim_kind, slice
 
 
 # Lib ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -117,7 +117,6 @@ julia> field(E2C(1))
 # Error showing value of type Field{Tuple{Dimension{:Cell_, HORIZONTAL}, Dimension{:K_, HORIZONTAL}}, Float64, 2, Tuple{Dimension{:Cell_, HORIZONTAL}, Dimension{:K_, HORIZONTAL}}}:
 # ERROR: CanonicalIndexError: getindex not defined for Field{Tuple{Dimension{:Cell_, HORIZONTAL}, Dimension{:K_, HORIZONTAL}}, Float64, 2, Tuple{Dimension{:Cell_, HORIZONTAL}, Dimension{:K_, HORIZONTAL}}}
 
-# TODO add indexing of arrays to Field. No more OffsetArrays
 struct Field{T <: Union{AbstractFloat, Integer}, N, BD <: Tuple{Vararg{Dimension}}, D <: Tuple{Vararg{Dimension}}} <: AbstractArray{T,N}
     dims::D
     data::AbstractArray{T,N}
@@ -134,7 +133,7 @@ struct Field{T <: Union{AbstractFloat, Integer}, N, BD <: Tuple{Vararg{Dimension
     end
 end
 
-# Call functions to Field struct #TODO Add to documentation of Field
+
 (field_call::Field)(f_off::Tuple{FieldOffset, <:Integer})::Field = field_call(f_off...)
 function (field_call::Field)(f_off::FieldOffset, ind::Integer = 0)::Field
 
@@ -159,17 +158,14 @@ function (field_call::Field)(f_off::FieldOffset, ind::Integer = 0)::Field
         else
             f(slice) = map(x -> x == -1 ? convert(eltype(field_call), 0) : getindex(slice, Int.(x)), conn_data)
 
-            # TODO: stimmt das überhaupt???????????????????
             sliced_data = eachslice(field_call.data, dims=Tuple(deleteat!(collect(1:ndims(field_call)), conn_ind)))
             outsize = [size(field_call)...]
             Tuple(splice!(outsize, conn_ind, [size(conn_data)...]))
             res = reshape(hcat(map(f, sliced_data)...), Tuple(outsize))
         end
 
-        # TODO: stimmt das überhaupt???????????????????
         new_dims = [field_call.dims[1:conn_ind-1]..., f_target..., field_call.dims[conn_ind+1:end]...]
 
-        # TODO: stimmt das überhaupt???????????????????
         return Field(Tuple(new_dims), res)
     else
         throw("The datatype: $(typeof(conn)) is not supported for within an offset_provider")
