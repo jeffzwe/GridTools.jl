@@ -150,7 +150,8 @@ function (field_call::Field)(f_off::FieldOffset, ind::Integer = 0)::Field
 
         conn_ind = get_dim_ind(field_call.dims, f_off.source)
 
-        @assert maximum(conn_data) <= maximum(axes(field_call)[conn_ind]) && !any(x -> x == 0, conn_data) && minimum(conn_data) > -2 "Indices of Connectivity $f_off are out of range for the called field"
+        @assert maximum(conn_data) <= maximum(axes(field_call)[conn_ind]) "Indices of Connectivity $f_off are out of range for the called field"
+        @assert !any(x -> x == 0, conn_data) && minimum(conn_data) > -2 "Illegal indices used in the Connectivity $f_off"
         @assert all(x -> x in f_off.source, conn.source) && all(x -> x in f_off.target, conn.target) "Source or target dimensions of Connectivity $f_off do not match the called field"     
         
         if ndims(field_call) == 1
@@ -171,14 +172,6 @@ function (field_call::Field)(f_off::FieldOffset, ind::Integer = 0)::Field
         throw("The datatype: $(typeof(conn)) is not supported for within an offset_provider")
     end
 end
-
-
-# TODO: Needed? Sincd the field should be called by an offset which then points to a dimension
-# function (field_call::Field)(dim_in::Tuple{<:Dimension, <:Integer})::Field
-#     new_size = zeros(Integer, length(axes(field_call.data)))
-#     new_size[get_dim_ind(field_call.dims, dim_in[1])] = dim_in[2]
-#     return Field(field_call.dims, OffsetArray(field_call.data, new_size...), field_call.broadcast_dims)
-# end
 
 # Field struct interfaces
 Base.size(F::Field)::Tuple = size(F.data)

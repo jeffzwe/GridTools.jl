@@ -1,17 +1,15 @@
 # advection test
 using Printf
-using GridTools
 using Debugger
+using GridTools
 
 Cell_ = Dimension{:Cell_, HORIZONTAL}
-K_ = Dimension{:K_, HORIZONTAL}
 Edge_ = Dimension{:Edge_, HORIZONTAL}
 Vertex_ = Dimension{:Vertex_, HORIZONTAL}
+K_ = Dimension{:K_, VERTICAL}
 V2VDim_ = Dimension{:V2V_, LOCAL}
 V2EDim_ = Dimension{:V2E_, LOCAL} 
 E2VDim_ = Dimension{:E2V_, LOCAL} 
-E2CDim_ = Dimension{:E2C_, LOCAL}
-C2EDim_ = Dimension{:C2E_, LOCAL}
 Cell = Cell_()
 K = K_()
 Edge = Edge_()
@@ -19,8 +17,6 @@ Vertex = Vertex_()
 V2VDim = V2VDim_()
 V2EDim = V2EDim_()
 E2VDim = E2VDim_()
-E2CDim = E2CDim_()
-C2EDim = C2EDim_()
 
 V2V = FieldOffset("V2V", source=Vertex, target=(Vertex, V2VDim))
 E2V = FieldOffset("E2V", source=Vertex, target=(Edge, E2VDim))
@@ -38,7 +34,7 @@ mesh = AtlasMesh(grid, num_level = 30)
 
 deg2radd = 2.0 * pi / 360.0
 δt = 1800.0  # time step in s
-niter = 2#1000
+niter = 1000
 eps = 1.0e-8
 
 metric = m_from_mesh(mesh)
@@ -158,7 +154,7 @@ for i in 1:niter
         backend = "py"
     )
 
-    println("Finished $i. upwind")
+    println("Timestep $i")
 
     temp = state
     global state = state_next
@@ -166,4 +162,8 @@ for i in 1:niter
 
     update_periodic_layers(mesh, state.rho)
 end
+
+println("Final Rho sum after $niter iterations: $(sum(state.rho))")
+println("Final Vel0 sum after $niter iterations: $(sum(state.vel[1]))")
+println("Final Vel1 sum after $niter iterations: $(sum(state.vel[2]))")
 

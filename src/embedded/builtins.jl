@@ -13,14 +13,15 @@ function Base.broadcast(n::Number, b_dims::Union{D, Dimension})::Field where D <
 end
 
 
+# TODO: Dont duplicate code! 
+
 """
     neighbor_sum(f::Field; axis::Dimension)
 
 Sums along the axis dimension. Outputs a field with dimensions size(f.dims)-1.
 """
 function neighbor_sum(field_in::Field; axis::Dimension)::Field
-    dim = findall(x -> x == axis, field_in.dims)[1]
-    return Field((field_in.dims[1:dim-1]..., field_in.dims[dim+1:end]...), dropdims(sum(field_in.data, dims=dim), dims=dim)) 
+    return reduction_master(field_in, axis, sum)
 end
 """
     max_over(f::Field; axis::Dimension)
@@ -28,8 +29,7 @@ end
 Gives the maximum along the axis dimension. Outputs a field with dimensions size(f.dims)-1.
 """
 function max_over(field_in::Field; axis::Dimension)::Field
-    dim = findall(x -> x == axis, field_in.dims)[1]
-    return Field((field_in.dims[1:dim-1]..., field_in.dims[dim+1:end]...), dropdims(maximum(field_in.data, dims=dim), dims=dim)) 
+    return reduction_master(field_in, axis, maximum)
 end
 """
     min_over(f::Field; axis::Dimension)
@@ -37,10 +37,22 @@ end
 Gives the minimum along the axis dimension. Outputs a field with dimensions size(f.dims)-1.
 """
 function min_over(field_in::Field; axis::Dimension)::Field
-    dim = findall(x -> x == axis, field_in.dims)[1]
-    return Field((field_in.dims[1:dim-1]..., field_in.dims[dim+1:end]...), dropdims(minimum(field_in.data, dims=dim), dims=dim)) 
+    return reduction_master(field_in, axis, minimum)
 end
 
+
+function reduction_master(field_in::Field, axis::Dimension, f::Function)
+    neutral_el = get_neutral(Val{Symbol(f)}(), eltype(field_in))
+    dim = get_dim_ind(field_in.dims, axis)
+
+    conn = OFFSET_PROVIDER[get_dim_name(axis)]
+    data = dropdims(f(ifelse.(conn.data .!= -1, field_in.data, neutral_el), dims=dim), dims=dim)
+    return Field((field_in.dims[1:dim-1]..., field_in.dims[dim+1:end]...), data)
+end
+
+get_neutral(f::Val{:sum}, type::DataType) = convert(type, 0)
+get_neutral(f::Val{:minimum}, type::DataType) = typemax(type)
+get_neutral(f::Val{:maximum}, type::DataType) = typemin(type)
 
 """
     where(mask::Field, true, false)

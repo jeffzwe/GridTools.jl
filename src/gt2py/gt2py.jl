@@ -27,6 +27,8 @@ const UnpackedAssignPass = PyNULL()
 const FieldOperatorTypeDeduction = PyNULL()
 const FieldOperater = PyNULL()
 const roundtrip = PyNULL()
+const gtfn_cpu = PyNULL()
+const cmake = PyNULL()
 const SourceLocation = PyNULL()
 
 const scalar_types = Dict()
@@ -56,6 +58,8 @@ function __init__()
     copy!(FieldOperatorTypeDeduction, pyimport("gt4py.next.ffront.foast_passes.type_deduction").FieldOperatorTypeDeduction)
     copy!(FieldOperater, pyimport("gt4py.next.ffront.decorator").FieldOperator)
     copy!(roundtrip, pyimport("gt4py.next.program_processors.runners.roundtrip"))
+    copy!(gtfn_cpu, pyimport("gt4py.next.program_processors.runners.gtfn"))
+    copy!(cmake, pyimport("gt4py.next.otf.compilation.build_systems.cmake"))
     copy!(SourceLocation, pyimport("gt4py.eve.concepts").SourceLocation)
 
     init_py_utils()
@@ -119,7 +123,17 @@ CLOSURE_VARS::Dict = Dict()
 
 # Methods -----------------------------------------------------------------------------------
 
-function py_field_operator(fo::FieldOp, backend = roundtrip.executor, grid_type = py"None"o, operator_attributes = Dict())
+function py_field_operator(fo::FieldOp, backend = nothing, grid_type = py"None"o, operator_attributes = Dict())
+
+    run_gtfn_cached_cmake = gtfn_cpu.otf_compile_executor.CachedOTFCompileExecutor(
+    name="run_gtfn_cached_cmake",
+    otf_workflow=gtfn_cpu.workflow.CachedStep(step=gtfn_cpu.run_gtfn.executor.otf_workflow.replace(
+        compilation=gtfn_cpu.compiler.Compiler(
+            cache_strategy=gtfn_cpu.cache.Strategy.PERSISTENT,
+            builder_factory=cmake.CMakeFactory(cmake_build_type=cmake.BuildType.RELEASE)
+        )),
+    hash_function=gtfn_cpu.compilation_hash),
+    )
 
     foast_definition_node, closure_vars = jast_to_foast(fo.expr, fo.closure_vars)
     loc = foast_definition_node.location
@@ -142,7 +156,7 @@ function py_field_operator(fo::FieldOp, backend = roundtrip.executor, grid_type 
             foast_node=foast_node,
             closure_vars=closure_vars,
             definition=py"None"o,
-            backend=backend,
+            backend=run_gtfn_cached_cmake,
             grid_type=grid_type,
         )
 end
@@ -199,19 +213,19 @@ function convert_type(a)
             new_data = a.data
         elseif typeof(a.data) <: OffsetArray
             for i in 1:length(b_dims)
-                offset[b_dims[i]] = minimum(axes(a)[i]) -1
+                offset[b_dims[i]] = minimum(axes(a)[i]) + 2
             end
-            
+
             new_data = no_offset_view(a.data)
-            return gtx.np_as_located_field(b_dims..., origin=offset)(new_data)
-             # return gtx.as_field(b_dims, new_data, origin = offset)        # TODO: change as soon as np_as_located_field is depricated
+            # return gtx.np_as_located_field(b_dims..., origin=offset)(new_data)
+             return gtx.as_field(b_dims, new_data, origin = offset)        # TODO: change as soon as np_as_located_field is depricated
         else
             new_data = np.asarray(a.data)
             @warn "Dtype of the Field: $a is not concrete. Data must be copied to Python which may affect performance. Try using dtypes <: Array."
         end
 
-        # return gtx.as_field(b_dims, new_data, origin = offset)        # TODO: change as soon as np_as_located_field is depricated
-        return gtx.np_as_located_field(b_dims...)(new_data)
+        return gtx.as_field(b_dims, new_data, origin = offset)        # TODO: change as soon as np_as_located_field is depricated
+        # return gtx.np_as_located_field(b_dims...)(new_data)
 
     elseif typeof(a) <: Connectivity
     
@@ -299,9 +313,11 @@ function init_py_utils()
     )
 
     py_dim_kind_init = Dict(
-    HORIZONTAL => gtx.DimensionKind.HORIZONTAL,
-    VERTICAL => gtx.DimensionKind.VERTICAL,
-    LOCAL => gtx.DimensionKind.LOCAL
+        # TODO: find out if the quotes are really needed, and if so report to gt4py that this needs
+        #  to fail with a better error message
+        HORIZONTAL => gtx.DimensionKind."HORIZONTAL",
+        VERTICAL => gtx.DimensionKind."VERTICAL",
+        LOCAL => gtx.DimensionKind."LOCAL"
     )
 
     builtin_py_op_init = Dict(

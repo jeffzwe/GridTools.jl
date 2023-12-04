@@ -34,19 +34,19 @@ a = Field((Vertex, K), reshape(collect(-3.0:8.0), (6, 2)))
 b = Field((K, Edge), reshape(collect(1.0:6.0), (2, 3)))
 
 A = Field((Vertex, K), OffsetArray(reshape(collect(1.:15.), 3, 5), -1:1, 0:4))
-B = Field((K, Edge), OffsetArray(reshape(ones(6), 3, 2), 1:3, 1:2))
+B = Field((K, Edge), OffsetArray(reshape(ones(6), 3, 2), 2:4, 1:2))
 
 mask_b = cat([true true false true true ; true false false false true ;true true true true true], [true false true false true ; true false false false true ;true true true true true], dims=3)
 
 mask = Field((Vertex, K, Edge), OffsetArray(mask_b, -1:1, 0:4, 1:2))
 
 edge_to_cell_table = [
-    [1  0];
-    [3  0];
-    [3  0];
-    [4  0];
-    [5  0];
-    [6  0];
+    [1  -1];
+    [3  -1];
+    [3  -1];
+    [4  -1];
+    [5  -1];
+    [6  -1];
     [1  6];
     [1  2];
     [2  3];
@@ -85,31 +85,30 @@ offset_provider = Dict{String, Union{Connectivity, Dimension}}(
 # fo_neighbor_sum(a, offset_provider=offset_provider, backend = "py", out = out)
 
 
-@field_operator function nested_add(a::Field{Float64, 2, Tuple{Vertex_, K_}}, b::Field{Float64, 2, Tuple{K_, Edge_}})::Field{Float64, 3, Tuple{Vertex_, K_, Edge_}}
-    return a .+ b
-end
+# @field_operator function nested_add(a::Field{Float64, 2, Tuple{Vertex_, K_}}, b::Field{Float64, 2, Tuple{K_, Edge_}})::Field{Float64, 3, Tuple{Vertex_, K_, Edge_}}
+#     return a .+ b
+# end
 
 # a = Field(Cell, collect(1.:15.))
 # b = Field(Cell, ones(15))
 # out = Field(Cell, zeros(15))
 
-out = Field((Vertex, K, Edge), OffsetArray(zeros(3, 3, 2), -2, 0, 0))
-# out = Field((Vertex, K, Edge), zeros(6, 2, 3))
+# out = Field((Vertex, K, Edge), OffsetArray(zeros(3, 3, 2), -2, 0, 0))
+# # out = Field((Vertex, K, Edge), zeros(6, 2, 3))
 
-@field_operator function test_addition(a::Field{Float64, 2, Tuple{Vertex_, K_}}, b::Field{Float64, 2, Tuple{K_, Edge_}})::Field{Float64, 3, Tuple{Vertex_, K_, Edge_}}
-    res = nested_add(a, b)
-    return sin.(res)
-end
-
-test_addition(A, B, out = out, backend="py")
-
-# out = Field((Edge), zeros(12))
-
-# @field_operator function hoi(x::Field{Float64, 1, Tuple{Cell_,}})::Field{Float64, 1, Tuple{Edge_,}}
-#         return x(E2C[1])
+# @field_operator function test_addition(a::Field{Float64, 2, Tuple{Vertex_, K_}}, b::Field{Float64, 2, Tuple{K_, Edge_}})::Field{Float64, 3, Tuple{Vertex_, K_, Edge_}}
+#     res = nested_add(a, b)
+#     return res
 # end
 
-# @run hoi(cell_values, out = out, offset_provider=offset_provider)
+a = Field(Cell, collect(1.:15.))
+out = Field(Edge, zeros(Float64, 12))
+
+@field_operator function fo_neighbor_sum(a::Field{Float64, 1, Tuple{Cell_}})::Field{Float64, 1, Tuple{Edge_}}
+    return neighbor_sum(a(E2C), axis=E2CDim)
+end
+
+fo_neighbor_sum(a, offset_provider=offset_provider, out = out)
 
 # x = Field((Cell, K, Edge), reshape(collect(1.:36.), (3, 6, 2)))
 # k_values = [[2 4];[3 5];[4 6];[1 6];[2 5];[3 4]]
