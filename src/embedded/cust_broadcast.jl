@@ -304,8 +304,8 @@ end
 @inline _f_newindex(i::Integer, keep::Tuple{}) = CartesianIndex(())
 @inline _f_newindex(I::Tuple{}, keep::Tuple{}) = ()
 @inline _f_newindex(i::Integer, keep::Tuple) = i
-# Dropping dims. Defaults does nothing here.
-@inline function _f_newindex(I, keep::Tuple)
+# Dropping dims
+@inline function _f_newindex(I::Tuple{Vararg{Int64}}, keep::Tuple{Vararg{Bool}})
     if keep[1]
         return (I[1], _f_newindex(Base.tail(I), Base.tail(keep))...)
     else

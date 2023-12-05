@@ -18,7 +18,7 @@ using Debugger
 
 import Base.Broadcast: Extruded, Style, BroadcastStyle, ArrayStyle ,Broadcasted
 
-export Dimension, DimensionKind, HORIZONTAL, VERTICAL, LOCAL, Field, Connectivity, FieldOffset, neighbor_sum, max_over, min_over, where, concat, @field_operator, @module_vars, get_dim_name, get_dim_kind, slice
+export Dimension, DimensionKind, HORIZONTAL, VERTICAL, LOCAL, Field, Connectivity, FieldOffset, neighbor_sum, max_over, min_over, where, concat, @field_operator, @module_vars, get_dim_name, get_dim_kind, slice, copyfield!
 
 
 # Lib ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -180,32 +180,11 @@ Base.convert(t::Type{T}, F::Field) where {T<:Number} = Field(F.dims, convert.(t,
 @propagate_inbounds Base.getindex(F::Field{T,N}, inds::Vararg{Int,N}) where {T,N} = F.data[inds...]
 @propagate_inbounds Base.setindex!(F::Field{T,N}, val, inds::Vararg{Int,N}) where {T,N} = F.data[inds...] = val
 Base.showarg(io::IO, F::Field, toplevel) = print(io, eltype(F), " Field with dimensions ", get_dim_name.(F.broadcast_dims))
-function Base.copyto!(target::Tuple{Vararg{Field}}, source::Tuple{Vararg{Field}})
-    for i in 1:length(target)
-        target[i] .= source[i]
-    end
-end
 function slice(F::Field, inds...)::Field
     dim_ind = findall(x -> typeof(x) <: UnitRange{Int64}, inds)
     return Field(F.dims[dim_ind], view(F.data, inds...), F.broadcast_dims)
 end
 
-
-
-# TODO: where doesnt allow mixed types. Should we promote mixed types or should we throw an error?
-
-# function Base.promote(f1::Field, f2::Field)
-#     f1_new_data, f2_new_data = promote(f1.data, f2.data)
-#     return Field(f1.dims, f1_new_data, f1.broadcast_dims), Field(f2.dims, f2_new_data, f2.broadcast_dims)
-# end
-
-# function Base.promote(scal::Real, f::Field)
-
-# end
-
-# function Base.promote(f::Field, scal::Real)
-
-# end
 
 # Connectivity struct ------------------------------------------------------------
 
@@ -234,12 +213,27 @@ struct FieldOp
     closure_vars::Dict
 end
 
+# Includes ------------------------------------------------------------------------------------
+
+include("embedded/builtins.jl")
+include("embedded/cust_broadcast.jl")
+include("gt2py/gt2py.jl")
+
+# Helper functions for fields -------------------------------------------------------------------
+
+function copyfield!(target::Tuple{Vararg{Field}}, source::Tuple{Vararg{Field}})
+    for i in 1:length(target)
+        target[i] .= source[i]
+    end
+end
+copyfield!(target, source) = target .= source
+
+# Field operator functionalities ------------------------------------------------------------
+
 OFFSET_PROVIDER::Union{Dict{String, Union{Connectivity, Dimension}}, Nothing} = nothing
-FIELD_OPERATORS::Dict{Symbol, FieldOp} = Dict{Symbol, FieldOp}()
+FIELD_OPERATORS::Dict{Symbol, PyObject} = Dict{Symbol, PyObject}()
 
 function (fo::FieldOp)(args...; offset_provider::Dict{String, Union{Connectivity, Dimension}} = Dict{String, Union{Connectivity, Dimension}}(), backend::String = "embedded", out = nothing, kwargs...)
-
-    FIELD_OPERATORS[fo.name] = fo
 
     is_outermost_fo = isnothing(OFFSET_PROVIDER)
     if is_outermost_fo
@@ -259,7 +253,7 @@ end
 
 function backend_execution(backend::Val{:embedded}, fo::FieldOp, args, kwargs, out, is_outermost_fo)
     if is_outermost_fo
-        copyto!(out, fo.f(args...; kwargs...))
+        copyfield!(out, fo.f(args...; kwargs...))
         return
     else
         return fo.f(args...; kwargs...)
@@ -267,7 +261,12 @@ function backend_execution(backend::Val{:embedded}, fo::FieldOp, args, kwargs, o
 end
 
 function backend_execution(backend::Val{:py}, fo::FieldOp, args, kwargs, out, is_outermost_fo)
-    f = py_field_operator(fo)
+    if haskey(FIELD_OPERATORS, fo.name)
+        f = FIELD_OPERATORS[fo.name]
+    else
+        f = py_field_operator(fo)
+        FIELD_OPERATORS[fo.name] = f
+    end
     p_args, p_kwargs, p_out, p_offset_provider = py_args.((args, kwargs, out, GridTools.OFFSET_PROVIDER))
     if is_outermost_fo
         f(p_args..., out = p_out, offset_provider = p_offset_provider; p_kwargs...)
@@ -365,11 +364,5 @@ end
 
 generate_unique_name(name::Symbol, value::Integer = 0) = Symbol("$(name)ᐞ$(value)")
 
-# Includes ------------------------------------------------------------------------------------
-
-include("embedded/builtins.jl")
-include("embedded/cust_broadcast.jl")
-include("gt2py/gt2py.jl")
 
 end
-

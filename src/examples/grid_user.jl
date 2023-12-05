@@ -30,49 +30,49 @@ E2C = FieldOffset("E2C", source=Cell, target=(Edge, E2CDim))
 C2E = FieldOffset("C2E", source=Edge, target=(Cell, C2EDim))
 Koff = FieldOffset("Koff", source=K, target=K)
 
-a = Field((Vertex, K), reshape(collect(-3.0:8.0), (6, 2)))
-b = Field((K, Edge), reshape(collect(1.0:6.0), (2, 3)))
+# a = Field((Vertex, K), reshape(collect(-3.0:8.0), (6, 2)))
+# b = Field((K, Edge), reshape(collect(1.0:6.0), (2, 3)))
 
-A = Field((Vertex, K), OffsetArray(reshape(collect(1.:15.), 3, 5), -1:1, 0:4))
-B = Field((K, Edge), OffsetArray(reshape(ones(6), 3, 2), 2:4, 1:2))
+# A = Field((Vertex, K), OffsetArray(reshape(collect(1.:15.), 3, 5), -1:1, 0:4))
+# B = Field((K, Edge), OffsetArray(reshape(ones(6), 3, 2), 2:4, 1:2))
 
-mask_b = cat([true true false true true ; true false false false true ;true true true true true], [true false true false true ; true false false false true ;true true true true true], dims=3)
+# mask_b = cat([true true false true true ; true false false false true ;true true true true true], [true false true false true ; true false false false true ;true true true true true], dims=3)
 
-mask = Field((Vertex, K, Edge), OffsetArray(mask_b, -1:1, 0:4, 1:2))
+# mask = Field((Vertex, K, Edge), OffsetArray(mask_b, -1:1, 0:4, 1:2))
 
-edge_to_cell_table = [
-    [1  -1];
-    [3  -1];
-    [3  -1];
-    [4  -1];
-    [5  -1];
-    [6  -1];
-    [1  6];
-    [1  2];
-    [2  3];
-    [2  4];
-    [4  5];
-    [5  6]
-]
+# edge_to_cell_table = [
+#     [1  -1];
+#     [3  -1];
+#     [3  -1];
+#     [4  -1];
+#     [5  -1];
+#     [6  -1];
+#     [1  6];
+#     [1  2];
+#     [2  3];
+#     [2  4];
+#     [4  5];
+#     [5  6]
+# ]
 
-cell_to_edge_table = [
-    [1   7   8];
-    [8   9  10];
-    [2   3   9];
-    [4  10  11];
-    [5  11  12];
-    [6   7  12]
-]
+# cell_to_edge_table = [
+#     [1   7   8];
+#     [8   9  10];
+#     [2   3   9];
+#     [4  10  11];
+#     [5  11  12];
+#     [6   7  12]
+# ]
 
-cell_values = Field(Cell, [5., 6., 7., 8., 3., 4., 5., 7., 4., 3., 2., 4., 6., 7., 5., 3., 2., 2., 5.])
+# cell_values = Field(Cell, [5., 6., 7., 8., 3., 4., 5., 7., 4., 3., 2., 4., 6., 7., 5., 3., 2., 2., 5.])
 
-E2C_offset_provider = Connectivity(edge_to_cell_table, Cell, Edge, 2)
-C2E_offset_provider = Connectivity(cell_to_edge_table, Edge, Cell, 3)
+# E2C_offset_provider = Connectivity(edge_to_cell_table, Cell, Edge, 2)
+# C2E_offset_provider = Connectivity(cell_to_edge_table, Edge, Cell, 3)
 
-offset_provider = Dict{String, Union{Connectivity, Dimension}}(
-                   "E2C" => E2C_offset_provider,
-                   "C2E" => C2E_offset_provider
-                )
+# offset_provider = Dict{String, Union{Connectivity, Dimension}}(
+#                    "E2C" => E2C_offset_provider,
+#                    "C2E" => C2E_offset_provider
+#                 )
 
 
 # a = Field(Cell, collect(1.:15.))
@@ -101,14 +101,14 @@ offset_provider = Dict{String, Union{Connectivity, Dimension}}(
 #     return res
 # end
 
-a = Field(Cell, collect(1.:15.))
-out = Field(Edge, zeros(Float64, 12))
+# a = Field(Cell, collect(1.:15.))
+# out = Field(Edge, zeros(Float64, 12))
 
-@field_operator function fo_neighbor_sum(a::Field{Float64, 1, Tuple{Cell_}})::Field{Float64, 1, Tuple{Edge_}}
-    return neighbor_sum(a(E2C), axis=E2CDim)
-end
+# @field_operator function fo_neighbor_sum(a::Field{Float64, 1, Tuple{Cell_}})::Field{Float64, 1, Tuple{Edge_}}
+#     return neighbor_sum(a(E2C), axis=E2CDim)
+# end
 
-fo_neighbor_sum(a, offset_provider=offset_provider, out = out)
+# fo_neighbor_sum(a, offset_provider=offset_provider, out = out)
 
 # x = Field((Cell, K, Edge), reshape(collect(1.:36.), (3, 6, 2)))
 # k_values = [[2 4];[3 5];[4 6];[1 6];[2 5];[3 4]]

@@ -1,6 +1,7 @@
 # advection test
 using Printf
 using Debugger
+using Statistics
 using GridTools
 
 Cell_ = Dimension{:Cell_, HORIZONTAL}
@@ -32,9 +33,8 @@ include("advection.jl")
 grid = atlas.StructuredGrid("O32")
 mesh = AtlasMesh(grid, num_level = 30)
 
-deg2radd = 2.0 * pi / 360.0
 δt = 1800.0  # time step in s
-niter = 1000
+niter = 20
 eps = 1.0e-8
 
 metric = m_from_mesh(mesh)
@@ -71,19 +71,19 @@ end
 
     lonc = 0.5 * pi
     latc = 0.0
-    deg2radd = 2.0 * pi / 360.0
+    _deg2rad = 2.0 * pi / 360.0
 
-    mesh_xyrad_x, mesh_xyrad_y = mesh_xydeg_x .* deg2radd, mesh_xydeg_y .* deg2radd
+    mesh_xyrad_x, mesh_xyrad_y = mesh_xydeg_x .* _deg2rad, mesh_xydeg_y .* _deg2rad
     rsina, rcosa = sin.(mesh_xyrad_y), cos.(mesh_xyrad_y)
     
     zdist = mesh_radius .* acos.(sin(latc) .* rsina .+ cos(latc) .* rcosa .* cos.(mesh_xyrad_x .- lonc))
-  
+    
     rpr = (zdist ./ (mesh_radius / 2.0)) .^ 2.0
-   
     rpr = min.(1.0, rpr)
 
     return broadcast(where(mesh_vertex_ghost_mask, 0.0, 0.5 .* (1.0 .+ cos.(pi .* rpr))), (Vertex, K))
 end
+
 
 initial_rho(
     mesh.radius,
@@ -94,7 +94,6 @@ initial_rho(
     offset_provider=mesh.offset_provider
 )
 
-
 @field_operator function initial_velocity(
     mesh_xydeg_x::Field{Float64, 1, Tuple{Vertex_}},
     mesh_xydeg_y::Field{Float64, 1, Tuple{Vertex_}},
@@ -102,10 +101,10 @@ initial_rho(
     metric_g11::Field{Float64, 1, Tuple{Vertex_}},
     metric_g22::Field{Float64, 1, Tuple{Vertex_}}
     )::Tuple{Field{Float64, 1, Tuple{Vertex_, K_}}, Field{Float64, 1, Tuple{Vertex_, K_}}, Field{Float64, 0, Tuple{Vertex_, K_}}}
-    deg2radd = 2.0 * pi / 360.0
-    mesh_xyrad_x, mesh_xyrad_y = mesh_xydeg_x .* deg2radd, mesh_xydeg_y .* deg2radd
+    _deg2rad = 2.0 * pi / 360.0
+    mesh_xyrad_x, mesh_xyrad_y = mesh_xydeg_x .* _deg2rad, mesh_xydeg_y .* _deg2rad
     u0 = 22.238985328911745
-    flow_angle = 0.0 * deg2radd  # radians
+    flow_angle = 0.0 * _deg2rad  # radians
 
     rsina, rcosa = sin.(mesh_xyrad_y), cos.(mesh_xyrad_y)
     cosb, sinb = cos(flow_angle), sin(flow_angle)
@@ -128,12 +127,13 @@ initial_velocity(
     offset_provider=mesh.offset_provider,
 )
 
-copyto!(state_next.vel, state.vel)
+copyfield!(state_next.vel, state.vel)
+
+println("min max avg of initial rho = $(minimum(state.rho.data)) , $(maximum(state.rho.data)) , $(mean(state.rho.data))")
 
 tmp_fields["tmp_vertex_1"] .= reshape(collect(0.:mesh.num_level-1), (1, mesh.num_level))
 nabla_z(tmp_fields["tmp_vertex_1"], level_indices, mesh.num_level, out=tmp_fields["tmp_vertex_2"], offset_provider = mesh.offset_provider)
 
-println("Arrived at upwind iterations")
 
 for i in 1:niter
 
@@ -163,7 +163,6 @@ for i in 1:niter
     update_periodic_layers(mesh, state.rho)
 end
 
-println("Final Rho sum after $niter iterations: $(sum(state.rho))")
-println("Final Vel0 sum after $niter iterations: $(sum(state.vel[1]))")
-println("Final Vel1 sum after $niter iterations: $(sum(state.vel[2]))")
-
+println("min max sum of final rho = $(minimum(state.rho.data)) , $(maximum(state.rho.data)) , $(sum(state.rho.data))")
+println("Final Vel0 sum after $niter iterations: $(sum(state.vel[1].data))")
+println("Final Vel1 sum after $niter iterations: $(sum(state.vel[2].data))")
