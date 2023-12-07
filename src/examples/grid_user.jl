@@ -30,15 +30,18 @@ E2C = FieldOffset("E2C", source=Cell, target=(Edge, E2CDim))
 C2E = FieldOffset("C2E", source=Edge, target=(Cell, C2EDim))
 Koff = FieldOffset("Koff", source=K, target=K)
 
-# a = Field((Vertex, K), reshape(collect(-3.0:8.0), (6, 2)))
-# b = Field((K, Edge), reshape(collect(1.0:6.0), (2, 3)))
+a = Field((Vertex, K), reshape(collect(-3.0:8.0), (6, 2)))
+b = Field((K, Edge), reshape(collect(1.0:6.0), (2, 3)))
 
-# A = Field((Vertex, K), OffsetArray(reshape(collect(1.:15.), 3, 5), -1:1, 0:4))
-# B = Field((K, Edge), OffsetArray(reshape(ones(6), 3, 2), 2:4, 1:2))
+A = Field((Vertex, K), reshape(collect(1.:15.), 3, 5), origin = Dict(Vertex => -2, K => -1))
+B = Field((K, Edge), reshape(ones(6), 3, 2))
 
-# mask_b = cat([true true false true true ; true false false false true ;true true true true true], [true false true false true ; true false false false true ;true true true true true], dims=3)
+B_arr = OffsetArray(reshape(ones(6), 3, 2), 1:3, 1:2)
+A_arr = OffsetArray(reshape(collect(1.:15.), 3, 5), -1:1, 0:4)
 
-# mask = Field((Vertex, K, Edge), OffsetArray(mask_b, -1:1, 0:4, 1:2))
+mask_b = cat([true true false true true ; true false false false true ;true true true true true], [true false true false true ; true false false false true ;true true true true true], dims=3)
+
+mask = Field((Vertex, K, Edge), mask_b, origin = Dict(Vertex => -2, K => -1))
 
 # edge_to_cell_table = [
 #     [1  -1];

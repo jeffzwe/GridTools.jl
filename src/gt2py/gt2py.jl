@@ -207,25 +207,18 @@ function convert_type(a)
             push!(b_dims, gtx.Dimension(get_dim_name(dim), kind = kind))      #TODO this requires strict naming rules for dimensions... not sure if we want that
         end
 
-        offset = Dict()
-
         if typeof(a.data) <: Array
             new_data = a.data
-        elseif typeof(a.data) <: OffsetArray
-            for i in 1:length(b_dims)
-                offset[b_dims[i]] = minimum(axes(a)[i]) + 2
-            end
-
-            new_data = no_offset_view(a.data)
-            # return gtx.np_as_located_field(b_dims..., origin=offset)(new_data)
-             return gtx.as_field(b_dims, new_data, origin = offset)        # TODO: change as soon as np_as_located_field is depricated
         else
             new_data = np.asarray(a.data)
             @warn "Dtype of the Field: $a is not concrete. Data must be copied to Python which may affect performance. Try using dtypes <: Array."
         end
 
-        return gtx.as_field(b_dims, new_data, origin = offset)        # TODO: change as soon as np_as_located_field is depricated
-        # return gtx.np_as_located_field(b_dims...)(new_data)
+        offset = Dict(convert_type(dim) => a.origin[i] for (i, dim) in enumerate(a.dims))
+
+        @bp
+
+        return gtx.as_field(b_dims, new_data, origin = offset)
 
     elseif typeof(a) <: Connectivity
     

@@ -1,7 +1,5 @@
 
 
-Benchmarks
-
 using BenchmarkTools
 using Profile
 #########################################################################################################
@@ -14,7 +12,7 @@ function prof()
     for i in [1000, 10000, 100000, 1000000]
         k =100
         # Profile.clear()
-        # for _ in 0:10000
+        # for _ in 0:250
         #     a=rand(i,k)
         #     b=rand(i,k)
         #     c=rand(i,k)
@@ -54,6 +52,7 @@ function bench()
         # a=rand($i,$k); 
         # b=rand($i,$k); 
         # c=rand($i,$k))
+        break
     end
 end
 
@@ -63,44 +62,44 @@ end
 
 
 
-mask = Field((Cell, K), rand(Bool,10,10))
-aa = Field((Cell, K), rand(10,10))
-bb = Field((Cell, K), rand(10,10))
-cc = Field((Cell, K), rand(10,10))
-dd = Field((Cell, K), rand(10,10))
-ee = Field((Cell, K), rand(10,10))
-ff = Field((Cell, K), rand(10,10))
+# mask = Field((Cell, K), rand(Bool,10,10))
+# aa = Field((Cell, K), rand(10,10))
+# bb = Field((Cell, K), rand(10,10))
+# cc = Field((Cell, K), rand(10,10))
+# dd = Field((Cell, K), rand(10,10))
+# ee = Field((Cell, K), rand(10,10))
+# ff = Field((Cell, K), rand(10,10))
 
-where(mask, (aa,(bb,cc)), (dd, (ee,ff)))
-whereit(mask, (aa,(bb,cc)), (dd, (ee,ff)))
+# where(mask, (aa,(bb,cc)), (dd, (ee,ff)))
+# whereit(mask, (aa,(bb,cc)), (dd, (ee,ff)))
 
  
-function bench()
-    for i in [1000, 10000, 100000]
-        k =100
+# function bench()
+#     for i in [1000, 10000, 100000]
+#         k =100
 
-        println("where $i")
+#         println("where $i")
 
-        @btime where(mask, (a,(b,c)), (d,(e,f))) setup=(
-            mask=Field((Cell, K), rand(Bool, $i,$k)); 
-            a=Field((Cell, K), rand($i,$k)); 
-            b=Field((Cell, K), rand($i,$k));
-            c=Field((Cell, K), rand($i,$k));
-            d=Field((Cell, K), rand($i,$k));
-            e=Field((Cell, K), rand($i,$k));
-            f=Field((Cell, K), rand($i,$k));)
+#         @btime where(mask, (a,(b,c)), (d,(e,f))) setup=(
+#             mask=Field((Cell, K), rand(Bool, $i,$k)); 
+#             a=Field((Cell, K), rand($i,$k)); 
+#             b=Field((Cell, K), rand($i,$k));
+#             c=Field((Cell, K), rand($i,$k));
+#             d=Field((Cell, K), rand($i,$k));
+#             e=Field((Cell, K), rand($i,$k));
+#             f=Field((Cell, K), rand($i,$k));)
 
-        println("whereit $i")
+#         println("whereit $i")
 
-        @btime whereit(mask, (a,(b,c)), (d,(e,f))) setup=(
-            mask=Field((Cell, K), rand(Bool, $i,$k)); 
-            a=Field((Cell, K), rand($i,$k)); 
-            b=Field((Cell, K), rand($i,$k));
-            c=Field((Cell, K), rand($i,$k));
-            d=Field((Cell, K), rand($i,$k));
-            e=Field((Cell, K), rand($i,$k));
-            f=Field((Cell, K), rand($i,$k));)
+#         @btime whereit(mask, (a,(b,c)), (d,(e,f))) setup=(
+#             mask=Field((Cell, K), rand(Bool, $i,$k)); 
+#             a=Field((Cell, K), rand($i,$k)); 
+#             b=Field((Cell, K), rand($i,$k));
+#             c=Field((Cell, K), rand($i,$k));
+#             d=Field((Cell, K), rand($i,$k));
+#             e=Field((Cell, K), rand($i,$k));
+#             f=Field((Cell, K), rand($i,$k));)
 
-    end
-end
+#     end
+# end
 

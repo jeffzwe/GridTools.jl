@@ -12,8 +12,7 @@ using BenchmarkTools
 using Profile
 using Base: @propagate_inbounds
 using MacroTools
-using OffsetArrays
-using OffsetArrays: IdOffsetRange, no_offset_view
+using OffsetArrays: IdOffsetRange
 using Debugger
 
 import Base.Broadcast: Extruded, Style, BroadcastStyle, ArrayStyle ,Broadcasted
@@ -117,19 +116,21 @@ julia> field(E2C(1))
 # Error showing value of type Field{Tuple{Dimension{:Cell_, HORIZONTAL}, Dimension{:K_, HORIZONTAL}}, Float64, 2, Tuple{Dimension{:Cell_, HORIZONTAL}, Dimension{:K_, HORIZONTAL}}}:
 # ERROR: CanonicalIndexError: getindex not defined for Field{Tuple{Dimension{:Cell_, HORIZONTAL}, Dimension{:K_, HORIZONTAL}}, Float64, 2, Tuple{Dimension{:Cell_, HORIZONTAL}, Dimension{:K_, HORIZONTAL}}}
 
-struct Field{T <: Union{AbstractFloat, Integer}, N, BD <: Tuple{Vararg{Dimension}}, D <: Tuple{Vararg{Dimension}}} <: AbstractArray{T,N}
+struct Field{T <: Union{AbstractFloat, Integer}, N, BD <: Tuple{Vararg{Dimension}}, D <: NTuple{N, Dimension}} <: AbstractArray{T,N}
     dims::D
-    data::AbstractArray{T,N}
+    data::Array{T,N}
     broadcast_dims::BD
+    origin::NTuple{N, Int64}
     
-    function Field(dims::D, data::AbstractArray{T,N}, broadcast_dims::BD = dims) where {T <: Union{AbstractFloat, Integer}, N, BD <: Tuple{Vararg{Dimension}}, D <: Tuple{Vararg{Dimension}}}
+    function Field(dims::D, data::Array{T,N}, broadcast_dims::BD = dims; origin = Dict{Dimension, Int64}()) where {T <: Union{AbstractFloat, Integer}, N, BD <: Tuple{Vararg{Dimension}}, D <: NTuple{N, Dimension}}
         if ndims(data) != 0 @assert length(dims) == ndims(data) end
-        return new{T,N,BD,D}(dims, data, broadcast_dims)
+        offsets = Tuple([get(origin, dim, 0) for dim in dims])
+        return new{T,N,BD,D}(dims, data, broadcast_dims, offsets)
     end
 
-    function Field(dim::Dimension, data::AbstractArray{T,N}, broadcast_dims::Union{Dimension,BD} = dim) where {T <: Union{AbstractFloat, Integer}, N, BD <: Tuple{Vararg{Dimension}}}
+    function Field(dim::Dimension, data::Array{T,N}, broadcast_dims::Union{Dimension,BD} = dim; origin = Dict{Dimension, Int64}()) where {T <: Union{AbstractFloat, Integer}, N, BD <: NTuple{N, Dimension}}
         if ndims(data) != 0 @assert ndims(data) == 1 end
-        return Field(Tuple(dim), data, Tuple(broadcast_dims))
+        return Field(Tuple(dim), data, Tuple(broadcast_dims), origin = origin)
     end
 end
 
@@ -140,14 +141,11 @@ function (field_call::Field)(f_off::FieldOffset, ind::Integer = 0)::Field
     conn = OFFSET_PROVIDER[f_off.name]
 
     if typeof(conn) <: Dimension
-        new_size = zeros(Integer, length(axes(field_call.data)))
-        new_size[get_dim_ind(field_call.dims, conn)] = ind
-        return Field(field_call.dims, OffsetArray(field_call.data, new_size...), field_call.broadcast_dims)
+        new_offsets = Dict(field_call.dims[i] => field_call.origin[i] for i in 1:length(field_call.dims))
+        new_offsets[conn] = ind
+        return Field(field_call.dims, field_call.data, field_call.broadcast_dims, origin = new_offsets)
     elseif typeof(conn) <: Connectivity
-
-        conn_data = ind == 0 ? no_offset_view(conn.data) : no_offset_view(conn.data)[:,ind]
-        f_target = ind == 0 ? f_off.target : f_off.target[1]
-
+        conn_data, f_target = ind == 0 ? (conn.data,f_off.target) : (conn.data[:,ind],f_off.target[1])
         conn_ind = get_dim_ind(field_call.dims, f_off.source)
 
         @assert maximum(conn_data) <= maximum(axes(field_call)[conn_ind]) "Indices of Connectivity $f_off are out of range for the called field"
@@ -174,17 +172,23 @@ function (field_call::Field)(f_off::FieldOffset, ind::Integer = 0)::Field
 end
 
 # Field struct interfaces
+# (d::Dict{Dimension, Int64})(k::Dimension)::Int64 = d[k]
+Base.axes(F::Field)::Tuple = IdOffsetRange.(axes(F.data), Tuple(F.origin))
 Base.size(F::Field)::Tuple = size(F.data)
-Base.axes(F::Field)::Tuple = axes(F.data)
 Base.convert(t::Type{T}, F::Field) where {T<:Number} = Field(F.dims, convert.(t, F.data), F.broadcast_dims)
-@propagate_inbounds Base.getindex(F::Field{T,N}, inds::Vararg{Int,N}) where {T,N} = F.data[inds...]
-@propagate_inbounds Base.setindex!(F::Field{T,N}, val, inds::Vararg{Int,N}) where {T,N} = F.data[inds...] = val
-Base.showarg(io::IO, F::Field, toplevel) = print(io, eltype(F), " Field with dimensions ", get_dim_name.(F.broadcast_dims))
+@propagate_inbounds function Base.getindex(F::Field{T,N}, inds::Vararg{Int,N}) where {T,N}
+    new_inds = inds .- F.origin
+    return F.data[new_inds...]
+end
+@propagate_inbounds function Base.setindex!(F::Field{T,N}, val, inds::Vararg{Int,N}) where {T,N}
+    new_inds = inds .- F.origin
+    F.data[new_inds...] = val
+end
+Base.showarg(io::IO, @nospecialize(F::Field), toplevel) = print(io, eltype(F), " Field with dimensions ", get_dim_name.(F.broadcast_dims))
 function slice(F::Field, inds...)::Field
     dim_ind = findall(x -> typeof(x) <: UnitRange{Int64}, inds)
     return Field(F.dims[dim_ind], view(F.data, inds...), F.broadcast_dims)
 end
-
 
 # Connectivity struct ------------------------------------------------------------
 

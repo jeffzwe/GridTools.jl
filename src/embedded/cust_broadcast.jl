@@ -10,12 +10,15 @@ function shape(f::Field)
     return FieldShape(f.dims, axes(f), f.broadcast_dims)
 end
 
-@inline function Base.Broadcast.materialize!(dest, bc::Broadcasted{ArrayStyle{Field}})
-    return copyto!(dest, Base.Broadcast.instantiate(bc))
+@inline function Base.Broadcast.copy(bc::Broadcasted{ArrayStyle{Field}})
+    ElType = Base.Broadcast.combine_eltypes(bc.f, bc.args)
+    @assert Base.isconcretetype(ElType) ("Field-broadcasting at the moment only supports concrete types")
+        # We can trust it and defer to the simpler `copyto!`
+    return copyto!(similar(bc, ElType), bc)
 end
 
 # Custom instantiate(): Dimension check and calculation of output dimension
-function Base.Broadcast.instantiate(bc::Broadcasted{ArrayStyle{Field}})
+@inline function Base.Broadcast.instantiate(bc::Broadcasted{ArrayStyle{Field}})
     return Broadcasted{ArrayStyle{Field}}(bc.f, bc.args, axes(bc))
 end
 
@@ -41,8 +44,18 @@ function ordered_subset(A::Tuple{Vararg{Dimension}}, B::Tuple{Vararg{Dimension}}
 end
 
 # Helper function for combine_axes
+function get_size_ifelse(mask::FieldShape, branch::FieldShape)
+    out_size = [branch.axes...]
+    ind_mask = findall(x -> x in branch.dims, mask.dims)
+    ind_out = findall(x -> x in mask.dims, branch.dims)
+
+    out_size[ind_out] .= mask.axes[ind_mask]
+    
+    return FieldShape(branch.dims, Tuple(out_size), branch.broadcast_dims)
+end
+
 @inline function get_size(out_dims::Vector{<:Dimension}, A::FieldShape, B::FieldShape)::Tuple
-    out_size = Vector()
+    out_size = []
 
     if isempty(A.axes) && isempty(B.axes)
         return Tuple(out_size)
@@ -60,20 +73,12 @@ end
             # intersection
             low = max(minimum(A.axes[ind_A]), minimum(B.axes[ind_B]))
             up = min(maximum(A.axes[ind_A]), maximum(B.axes[ind_B]))
-            if low == 1                                         
-                push!(out_size, Base.OneTo(up))                 
-            else
-                push!(out_size, IdOffsetRange(1:up-low+1, low-1))          
-            end
+            push!(out_size, IdOffsetRange(Base.OneTo(up-low+1), low-1))
         elseif dim in A.dims
             push!(out_size, A.axes[ind_A])
         elseif dim in B.dims
             push!(out_size, B.axes[ind_B])
         end
-    end
-
-    if eltype(Tuple(out_size)) == AbstractUnitRange{Int64}
-        map!(IdOffsetRange, out_size, out_size) 
     end
 
     return Tuple(out_size)
@@ -135,21 +140,6 @@ function promote_dims(dims_A::Tuple{Vararg{Dimension}}, dims_B::Tuple{Vararg{Dim
     end
 
     return topological_sort
-end
-
-function get_size_ifelse(mask::FieldShape, branch::FieldShape)
-    out_size = [branch.axes...]
-    ind_mask = findall(x -> x in branch.dims, mask.dims)
-    ind_out = findall(x -> x in mask.dims, branch.dims)
-
-    out_size[ind_out] .= mask.axes[ind_mask]
-
-    if eltype(Tuple(out_size)) == AbstractUnitRange{Int64}
-        map!(IdOffsetRange, out_size, out_size) 
-    end
-    
-    return FieldShape(branch.dims, Tuple(out_size), branch.broadcast_dims)
-
 end
 
 
@@ -214,9 +204,11 @@ end
 
 # Custom similar(): Creates output object
 function Base.similar(bc::Broadcasted{ArrayStyle{Field}}, ::Type{ElType}) where ElType
-    Field(bc.axes.dims, similar(Array{ElType}, axes(bc)), bc.axes.broadcast_dims)
+    @bp
+    axes_offsets = getproperty.(axes(bc), :offset)
+    offsets = Dict(bc.axes.dims[i] => axes_offsets[i] for i in 1:length(axes_offsets))
+    Field(bc.axes.dims, similar(Array{ElType}, parent.(axes(bc))), bc.axes.broadcast_dims, origin = offsets)
 end
-
 
 # -----------------------------------------------------------------------------------------------------------------------------------------
 
@@ -231,7 +223,7 @@ end
     end
 
     bc′ = Base.Broadcast.preprocess(shape(dest), bc)
-
+    
     # Performance may vary depending on whether `@inbounds` is placed outside the
     # for loop or not. (cf. https://github.com/JuliaLang/julia/issues/38086)
     @inbounds @simd for I in eachindex(dest)
@@ -244,24 +236,19 @@ end
 # -----------------------------------------------------------------------------------------------------------------------------------------
 
 # Custom preprocess(): Inorder to pass output dimensions to extrude
-@inline function Base.Broadcast.preprocess(dest::FieldShape, A::Field)
-    if ndims(A) == 0 
-        return (A[],)
-    else
-        return f_extrude(Base.Broadcast.broadcast_unalias(dest, A), dest)
-    end
-end
+@inline Base.Broadcast.preprocess(dest::FieldShape, A::Field) = f_extrude(Base.Broadcast.broadcast_unalias(dest, A), dest)
 
-@inline function f_extrude(A::Field, dest::FieldShape)
-    return Extruded(A, f_newindexer(A.dims, dest.broadcast_dims, dest.axes)...)
-end
+@inline f_extrude(A::Field, dest::FieldShape) = Extruded(A, f_newindexer(A.dims, dest.broadcast_dims, dest.axes)...)
+@inline f_extrude(A::Field{<:Any, 0}, dest::FieldShape) = (A[],)
 
 # Idefault not needed... Extruded expects a third argument
 @inline f_newindexer(dims::Tuple, b_dims::Tuple{}, ax::Tuple) = (), ()
 @inline function f_newindexer(dims::Tuple, b_dims::Tuple, ax::Tuple)
     ind1 = b_dims[1]
-    keep, Idefault = f_newindexer(dims, Base.tail(b_dims), ax)
     next_keep = ind1 in dims
+
+    keep, Idefault = f_newindexer(dims, Base.tail(b_dims), ax)
+    
     (next_keep, keep...) , (0, Idefault...)
 end 
 
@@ -274,15 +261,20 @@ end
     @inbounds f_broadcast_getindex(bc, I)
 end
 
+Base.@propagate_inbounds function f_broadcast_getindex(bc::Broadcasted{<:Any,<:Any,typeof(ifelse),<:Any}, I)
+    return f_getindex(bc.args[1], I) ? f_getindex(bc.args[2], I) : f_getindex(bc.args[3], I)
+end
+
 Base.@propagate_inbounds function f_broadcast_getindex(bc::Broadcasted{<:Any,<:Any,<:Any,<:Any}, I)
     args = f_getindex(bc.args, I)
     return Base.Broadcast._broadcast_getindex_evalf(bc.f, args...)
 end
 
-# No changes to original: Utilities for f_broadcast_getindex
+# Utilities for f_broadcast_getindex
 Base.@propagate_inbounds f_getindex(args::Tuple, I) = (f_broadcast_getindex(args[1], I), f_getindex(Base.tail(args), I)...)
 Base.@propagate_inbounds f_getindex(args::Tuple{Any}, I) = (f_broadcast_getindex(args[1], I),)
 Base.@propagate_inbounds f_getindex(args::Tuple{}, I) = ()
+Base.@propagate_inbounds f_getindex(arg::Any, I) = f_broadcast_getindex(arg, I)
 
 # No changes to original
 Base.@propagate_inbounds f_broadcast_getindex(A::Union{Ref,AbstractArray{<:Any,0},Number}, I) = A[] # Scalar-likes can just ignore all indices
@@ -292,23 +284,20 @@ Base.@propagate_inbounds f_broadcast_getindex(A::Tuple{Any}, I) = A[1]
 Base.@propagate_inbounds f_broadcast_getindex(A::Tuple, I) = A[I[1]]
 # Everything else falls back to dynamically dropping broadcasted indices based upon its axes
 Base.@propagate_inbounds f_broadcast_getindex(A, I) = A[Base.Broadcast.newindex(A, I)]
-Base.@propagate_inbounds function f_broadcast_getindex(b::Extruded, i) 
-    ind = f_newindex(i, b.keeps)
-    return checkbounds(Bool, b.x, ind) ? b.x[ind] : nothing
+Base.@propagate_inbounds function f_broadcast_getindex(b::Extruded, i)
+    return b.x[f_newindex(i, b.keeps)]
 end
 
-@inline f_newindex(I::CartesianIndex, keep) = CartesianIndex(_f_newindex(I.I, keep))
+@inline f_newindex(I::CartesianIndex, keep) = CartesianIndex(_f_newindex(Val{keep[1]}(), I.I, keep)) # TODO: should be Base.tail(keep) aber langsam... cheggs ned
+
 @inline f_newindex(i::Integer, keep::Tuple{}) = CartesianIndex(())
-@inline f_newindex(i::Integer, keep::Tuple) = i
 
-@inline _f_newindex(i::Integer, keep::Tuple{}) = CartesianIndex(())
-@inline _f_newindex(I::Tuple{}, keep::Tuple{}) = ()
-@inline _f_newindex(i::Integer, keep::Tuple) = i
 # Dropping dims
-@inline function _f_newindex(I::Tuple{Vararg{Int64}}, keep::Tuple{Vararg{Bool}})
-    if keep[1]
-        return (I[1], _f_newindex(Base.tail(I), Base.tail(keep))...)
-    else
-        return _f_newindex(Base.tail(I), Base.tail(keep))
-    end
-end
+@inline _f_newindex(sym::Val{true}, I, keep) = (I[1], _f_newindex(Val{keep[1]}(), Base.tail(I), Base.tail(keep))...)
+@inline _f_newindex(sym::Val{false}, I, keep) = _f_newindex(Val{keep[1]}(), Base.tail(I), Base.tail(keep))
+@inline _f_newindex(sym::Val{true}, I::Tuple{Int64}, keep::Tuple{Bool}) = (I[1],)
+@inline _f_newindex(sym::Val{false}, I::Tuple{Int64}, keep::Tuple{Bool}) = ()
+
+
+# TODO: Verify if unnecessary
+# @inline f_newindex(i::Integer, keep::Tuple, defaults) = i
