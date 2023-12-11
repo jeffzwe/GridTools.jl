@@ -204,19 +204,16 @@ end
 
 # TODO OffsetArray is ignored for the moment
 
-A = Field((Vertex, K), OffsetArray(reshape(collect(1.:15.), 3, 5), -1:1, 0:4))
-a = Field((Vertex, K), reshape(collect(1.:15.), 3, 5))
-arr_out = Field((Vertex, K), zeros((3, 5)))
-off_out = Field((Vertex, K), zeros((3, 5)))
+A = Field((Vertex, K), reshape(collect(1.:15.), 3, 5), origin = Dict(Vertex => -2, K => -1))
+B = Field((K, Edge), reshape(ones(6), 3, 2))
 
-@field_operator function fo_offset_array(a::Field{Float64, 2, Tuple{Vertex_, K_}})::Field{Float64, 2, Tuple{Vertex_, K_}}
-        return a .+ 10. ./ 2.
+out = Field((Vertex, K, Edge), zeros(3,3,2))
+
+@field_operator function fo_offset_array(A::Field{Float64, 2, Tuple{Vertex_, K_}}, B::Field{Float64, 2, Tuple{K_, Edge_}})::Field{Float64, 3, Tuple{Vertex_, K_, Edge_}}
+        return A .+ B
     end
 
-fo_offset_array(a, backend = "py", out = arr_out)
-fo_offset_array(A, backend = "py", out = off_out)
-
-@test arr_out == off_out
+@test @to_py fo_offset_array(A, B, backend="py", out=out)
 
 # -------------------------------------------------
 

@@ -1,7 +1,4 @@
 
-# TODO: place in submodule
-# TODO add forbidden Symbols to a list where an error is thrown when used: :hcat, :vcat, etc
-
 # First call, takes closure_vars and passes it to the function instance
 function visit_jast(expr::Expr, closure_vars::Dict)
     return visit_function(expr.args, closure_vars)
@@ -19,7 +16,7 @@ function _builtin_type_constructor_symbols(captured_vars, loc)::Tuple
     captured_type_builtins = Dict(
             name => value
             for (name, value) in captured_vars
-            if name in fbuiltins.TYPE_BUILTIN_NAMES && value == py"getattr"(fbuiltins, name)        # TODO originally was === . Doesnt work with pyobjects. Verify
+            if name in fbuiltins.TYPE_BUILTIN_NAMES && value == py"getattr"(fbuiltins, name) # NOTE: Should be === . Doesnt work with pyobjects
     )
 
     to_be_inserted = union(python_type_builtins, captured_type_builtins)
@@ -215,7 +212,7 @@ function visit_(sym::Val{:(=)}, args::Array, outer_loc)
         constraint_type = ts.DataType
         if py"isinstance"(new_value, foast.TupleExpr)
             constraint_type = ts.TupleType
-        elseif type_info.is_concrete(new_value.type) && type_info.type_class(new_value.type) == ts.ScalarType   # TODO originally was === . Doesnt work with pyobjects. Verify
+        elseif type_info.is_concrete(new_value.type) && type_info.type_class(new_value.type) == ts.ScalarType   # NOTE: Should be === . Doesnt work with pyobjects.
             constraint_type = ts.ScalarType
         end
 
@@ -239,7 +236,7 @@ function visit_(sym::Val{:tuple}, args::Array, outer_loc)
 end
 
 function visit_(sym::Val{:.}, args::Array, outer_loc)
-    if typeof(args[2]) == QuoteNode     # TODO Frozen namespace  # return foast.Attribute(value=visit(args[1], outer_loc), attr=string(args[2]), location=outer_loc)
+    if typeof(args[2]) == QuoteNode     # TODO Implement Frozen namespaces. return foast.Attribute(value=visit(args[1], outer_loc), attr=string(args[2]), location=outer_loc)
         throw("Access to object attributes is not permitted within a field_operator.")
     elseif typeof(args[2]) == Expr  # we have a function broadcast aka sin.(field)
         # arguments to (.)call are wrapped in a tuple expression
@@ -248,7 +245,7 @@ function visit_(sym::Val{:.}, args::Array, outer_loc)
         append!(args, func_args)      
         return visit_(Val{:call}(), args, outer_loc)
     else
-        throw("We shouldn't land here... Report.") # TODO verify
+        throw("We shouldn't land here... Report bug to GridTools.jl.")
     end
 end
 
@@ -275,7 +272,7 @@ function visit_(sym::Val{:call}, args::Array, outer_loc)
         )
     elseif args[1] in disallowed_op
         throw("The function $(args[1]) is currently not supported by gt4py.")
-    elseif args[1] == :slice  # TODO: What to do here? Current: pass unsliced field
+    elseif args[1] == :slice  # NOTE: Current: pass unsliced field
         return visit(args[2], outer_loc)
     else
         if args[1] == :astype args[2], args[3] = args[3], args[2] end

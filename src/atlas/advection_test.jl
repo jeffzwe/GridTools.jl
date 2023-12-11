@@ -68,7 +68,6 @@ end
     mesh_xydeg_y::Field{Float64, 1, Tuple{Vertex_}},
     mesh_vertex_ghost_mask::Field{Bool, 1, Tuple{Vertex_}}
     )::Field{Float64, 1, Tuple{Vertex_, K_}}
-
     lonc = 0.5 * pi
     latc = 0.0
     _deg2rad = 2.0 * pi / 360.0
@@ -150,8 +149,7 @@ for i in 1:niter
         mesh.dual_face_normal_weighted_x,
         mesh.dual_face_normal_weighted_y,
         out = state_next.rho,
-        offset_provider = mesh.offset_provider,
-        backend = "py"
+        offset_provider = mesh.offset_provider
     )
 
     println("Timestep $i")

@@ -12,13 +12,10 @@ function Base.broadcast(n::Number, b_dims::Union{D, Dimension})::Field where D <
     return Field((), fill(n), b_dims)
 end
 
-
-# TODO: Dont duplicate code! 
-
 """
     neighbor_sum(f::Field; axis::Dimension)
 
-Sums along the axis dimension. Outputs a field with dimensions size(f.dims)-1.
+Sums along the axis dimension.
 """
 function neighbor_sum(field_in::Field; axis::Dimension)::Field
     return reduction_master(field_in, axis, sum)
@@ -26,7 +23,7 @@ end
 """
     max_over(f::Field; axis::Dimension)
 
-Gives the maximum along the axis dimension. Outputs a field with dimensions size(f.dims)-1.
+Gives the maximum along the axis dimension.
 """
 function max_over(field_in::Field; axis::Dimension)::Field
     return reduction_master(field_in, axis, maximum)
@@ -34,7 +31,7 @@ end
 """
     min_over(f::Field; axis::Dimension)
 
-Gives the minimum along the axis dimension. Outputs a field with dimensions size(f.dims)-1.
+Gives the minimum along the axis dimension.
 """
 function min_over(field_in::Field; axis::Dimension)::Field
     return reduction_master(field_in, axis, minimum)
@@ -42,7 +39,7 @@ end
 
 
 function reduction_master(field_in::Field, axis::Dimension, f::Function)
-    neutral_el = get_neutral(Val{Symbol(f)}(), eltype(field_in))
+    neutral_el = get_neutral(f, eltype(field_in))
     dim = get_dim_ind(field_in.dims, axis)
 
     conn = OFFSET_PROVIDER[get_dim_name(axis)]
@@ -50,14 +47,14 @@ function reduction_master(field_in::Field, axis::Dimension, f::Function)
     return Field((field_in.dims[1:dim-1]..., field_in.dims[dim+1:end]...), data)
 end
 
-get_neutral(f::Val{:sum}, type::DataType) = convert(type, 0)
-get_neutral(f::Val{:minimum}, type::DataType) = typemax(type)
-get_neutral(f::Val{:maximum}, type::DataType) = typemin(type)
+get_neutral(f::typeof(sum), type::DataType) = convert(type, 0)
+get_neutral(f::typeof(minimum), type::DataType) = typemax(type)
+get_neutral(f::typeof(maximum), type::DataType) = typemin(type)
 
 """
     where(mask::Field, true, false)
 
-The 'where' loops over each entry of the mask and returns values corresponding to the same indexes of either the true or the false branch.
+"Where" loops over each entry of the mask and returns values corresponding to the same indices of either the true or the false branch.
 
 # Arguments
 - `mask::Field`: a field with eltype Boolean
@@ -67,14 +64,14 @@ The 'where' loops over each entry of the mask and returns values corresponding t
 # Examples
 ```julia-repl
 julia> mask = Field((Cell, K), rand(Bool, (3,3)))
-3x3  Field with dims (Cell_(), K_()) and broadcasted_dims (Cell_(), K_()):
- 1  0  0
- 0  1  0
+3×3 Bool Field with dimensions ("Cell", "K") with indices 1:3×1:3:
+ 0  0  1
  1  1  1
+ 1  0  0
 julia> a = Field((Cell, K), fill(1.0, (3,3)));
 julia> b = Field((Cell, K), fill(2.0, (3,3)));
 julia> where(mask, a, b)
-3x3  Field with dims (Cell_(), K_()) and broadcasted_dims (Cell_(), K_()):
+3x3  Field with dimensions ("Cell", "K") with indices 1:3×1:3:
  1.0  2.0  2.0
  2.0  1.0  2.0
  1.0  1.0  1.0
@@ -90,6 +87,31 @@ where(mask::Field, t1::Tuple, t2::Tuple)::Field = map(x -> where(mask, x[1], x[2
 end
 
 
+"""
+    concat(f1::Field, f2::Field)
+
+Combine two fields containing NaN values to one single field. Both fields are not allowed to contain overlapping data.
+
+# Examples
+```julia-repl
+julia> f1
+3x3  Field with dimensions ("Cell", "K") with indices 1:3×1:3:
+ 1.0  1.0  1.0
+ 1.0  NaN  1.0
+ 1.0  1.0  1.0
+
+julia> f2
+3x3  Field with dimensions ("Cell", "K") with indices 1:3×1:3:
+ NaN  NaN  NaN
+ NaN  5.0  NaN
+ NaN  NaN  NaN
+
+julia> concat(f1, f2)
+3x3  Field with dimensions ("Cell", "K") with indices 1:3×1:3:
+ 1.0  1.0  1.0
+ 1.0  5.0  1.0
+ 1.0  1.0  1.0
+"""
 function concat(f1::Field, f2::Field)
     @assert all(xor.(isnan.(f1), isnan.(f2))) "The matrices $f1 and $f2 are not combineable in a concat operation due to overlapping values."
     return concat_helper.(f1, f2)

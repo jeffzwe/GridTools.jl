@@ -1,3 +1,5 @@
+# TODO: place in submodule
+
 # Imports ---------------------------------------------------------------------------------
 ENV["PYCALL_JL_RUNTIME_PYTHON"] = Sys.which("python3.10")
 # ENV["PYTHONBREAKPOINT"] = "pdb.set_trace"
@@ -77,7 +79,7 @@ comp_op = Set([:(==), :(!=), :(<), :(<=), :(>), :(>=), :.==, :.!=, :.<, :.<=, :.
 
 math_ops = union(bin_op, unary_op, comp_op)
 
-disallowed_op = Set([])
+disallowed_op = Set([:hcat, :vcat]) #TODO: Add more forbidden operations for translation to gt4py
 
 builtin_op = Dict(
     :max_over => max_over, 
@@ -123,7 +125,7 @@ CLOSURE_VARS::Dict = Dict()
 
 # Methods -----------------------------------------------------------------------------------
 
-function py_field_operator(fo::FieldOp, backend = nothing, grid_type = py"None"o, operator_attributes = Dict())
+function py_field_operator(fo, backend = nothing, grid_type = py"None"o, operator_attributes = Dict())
 
     run_gtfn_cached_cmake = gtfn_cpu.otf_compile_executor.CachedOTFCompileExecutor(
     name="run_gtfn_cached_cmake",
@@ -204,7 +206,7 @@ function convert_type(a)
         b_dims = []
         for dim in a.broadcast_dims
             kind = py_dim_kind[(get_dim_kind(dim))]
-            push!(b_dims, gtx.Dimension(get_dim_name(dim), kind = kind))      #TODO this requires strict naming rules for dimensions... not sure if we want that
+            push!(b_dims, gtx.Dimension(get_dim_name(dim), kind = kind)) # NOTE: this requires strict naming rules for dimensions
         end
 
         if typeof(a.data) <: Array
@@ -215,8 +217,6 @@ function convert_type(a)
         end
 
         offset = Dict(convert_type(dim) => a.origin[i] for (i, dim) in enumerate(a.dims))
-
-        @bp
 
         return gtx.as_field(b_dims, new_data, origin = offset)
 
@@ -306,8 +306,7 @@ function init_py_utils()
     )
 
     py_dim_kind_init = Dict(
-        # TODO: find out if the quotes are really needed, and if so report to gt4py that this needs
-        #  to fail with a better error message
+        # TODO: Without quotes gt4py throws an error message. Report to gt4py that this needs to fail with a better error message.
         HORIZONTAL => gtx.DimensionKind."HORIZONTAL",
         VERTICAL => gtx.DimensionKind."VERTICAL",
         LOCAL => gtx.DimensionKind."LOCAL"

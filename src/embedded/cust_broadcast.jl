@@ -1,15 +1,21 @@
 Base.BroadcastStyle(::Type{<:Field}) = Broadcast.ArrayStyle{Field}()
 
-struct FieldShape
-    dims::Tuple{Vararg{Dimension}}
-    axes::Tuple{Vararg{AbstractUnitRange{Int64}}}
-    broadcast_dims::Tuple{Vararg{Dimension}}
+struct FieldShape{N, Dim <: NTuple{N, Dimension}, Ax <:  NTuple{N, UnitRange{Int64}}, B_Dim <: Tuple{Vararg{Dimension}}}
+    dims::Dim
+    axes::Ax
+    broadcast_dims::B_Dim
 end
 
 function shape(f::Field)
     return FieldShape(f.dims, axes(f), f.broadcast_dims)
 end
 
+# Only called for assign broadcasting (.=)
+@inline function Base.Broadcast.materialize!(dest, bc::Broadcasted{ArrayStyle{Field}})
+    return copyto!(dest, Base.Broadcast.instantiate(bc))
+end
+
+# Custom copy() that only allows for concrete types
 @inline function Base.Broadcast.copy(bc::Broadcasted{ArrayStyle{Field}})
     ElType = Base.Broadcast.combine_eltypes(bc.f, bc.args)
     @assert Base.isconcretetype(ElType) ("Field-broadcasting at the moment only supports concrete types")
@@ -22,17 +28,18 @@ end
     return Broadcasted{ArrayStyle{Field}}(bc.f, bc.args, axes(bc))
 end
 
-# -----------------------------------------------------------------------------------------------------------------------------------------
+# Dimension check and calculation of output dimension -----------------------------------------------------------------------------------------------------------------------------------------
 
-# Checks dimension and broadcast combatibility of all fields
+# Checks if dimension has been calculated. If not calculates new dimensions
 @inline Base.axes(bc::Broadcasted{ArrayStyle{Field}}) =     f_axes(bc, bc.axes)
 f_axes(::Broadcasted, shape::FieldShape) =                  shape.axes
-@inline f_axes(bc::Broadcasted, ::Nothing)  =               combine_axes(Val{Symbol(bc.f)}(), bc.args...)
+@inline f_axes(bc::Broadcasted, ::Nothing)  =               combine_axes(bc.f, bc.args...)
 
+# Checks if a Dimension Tuple is exists in the same order in another Dimension Tuple 
 function ordered_subset(A::Tuple{Vararg{Dimension}}, B::Tuple{Vararg{Dimension}})
     if isempty(A) || isempty(B) return false end
-    i, j = 1, 1
 
+    i, j = 1, 1
     while i <= length(A) && j <= length(B)
         if A[i] == B[j]
             i += 1 
@@ -43,7 +50,7 @@ function ordered_subset(A::Tuple{Vararg{Dimension}}, B::Tuple{Vararg{Dimension}}
     return i > length(A)
 end
 
-# Helper function for combine_axes
+# Calculates output size for the "where" builtin
 function get_size_ifelse(mask::FieldShape, branch::FieldShape)
     out_size = [branch.axes...]
     ind_mask = findall(x -> x in branch.dims, mask.dims)
@@ -54,12 +61,11 @@ function get_size_ifelse(mask::FieldShape, branch::FieldShape)
     return FieldShape(branch.dims, Tuple(out_size), branch.broadcast_dims)
 end
 
-@inline function get_size(out_dims::Vector{<:Dimension}, A::FieldShape, B::FieldShape)::Tuple
-    out_size = []
+# Calculates output size for all other functions
+@inline function get_size(out_dims::NTuple{N, Dimension}, A::FieldShape, B::FieldShape)::NTuple{N, UnitRange{Int64}} where {N}
+    out_size = ()
 
-    if isempty(A.axes) && isempty(B.axes)
-        return Tuple(out_size)
-    elseif isempty(A.axes)
+    if isempty(A.axes)
         return B.axes
     elseif isempty(B.axes)
         return A.axes
@@ -71,20 +77,20 @@ end
 
         if dim in A.dims && dim in B.dims
             # intersection
-            low = max(minimum(A.axes[ind_A]), minimum(B.axes[ind_B]))
-            up = min(maximum(A.axes[ind_A]), maximum(B.axes[ind_B]))
-            push!(out_size, IdOffsetRange(Base.OneTo(up-low+1), low-1))
+            low::Int64 = max(minimum(A.axes[ind_A]), minimum(B.axes[ind_B]))
+            up::Int64 = min(maximum(A.axes[ind_A]), maximum(B.axes[ind_B]))
+            out_size = (out_size..., UnitRange(low:up))
         elseif dim in A.dims
-            push!(out_size, A.axes[ind_A])
+            out_size = (out_size..., A.axes[ind_A])
         elseif dim in B.dims
-            push!(out_size, B.axes[ind_B])
+            out_size = (out_size..., B.axes[ind_B])
         end
     end
 
-    return Tuple(out_size)
+    return out_size
 end
-# Helper function for combine_axes
-function promote_dims(dims_A::Tuple{Vararg{Dimension}}, dims_B::Tuple{Vararg{Dimension}})::Vector{Dimension}
+
+function promote_dims(dims_A::Tuple{Vararg{Dimension}}, dims_B::Tuple{Vararg{Dimension}})::Tuple{Vararg{Dimension}}
 
     dims_list = [dims_A, dims_B]
 
@@ -106,7 +112,7 @@ function promote_dims(dims_A::Tuple{Vararg{Dimension}}, dims_B::Tuple{Vararg{Dim
         end
     end
 
-    topological_sort = Vector{Dimension}()
+    topological_sort = ()
 
     in_degree = Dict{Dimension, Integer}()
     for key in keys(graph)
@@ -123,7 +129,7 @@ function promote_dims(dims_A::Tuple{Vararg{Dimension}}, dims_B::Tuple{Vararg{Dim
 
         v = zero_in_degree_vertex_list[1]
         delete!(in_degree, v)
-        push!(topological_sort, v)
+        topological_sort = (topological_sort..., v)
 
         for (key, value) in graph
             if v in value
@@ -150,23 +156,24 @@ end
 @inline format(shape::FieldShape) = shape
 @inline format(x::Number) = nothing
 
-@inline function combine_axes(f::Val{:ifelse}, mask::Field, true_::Field, false_::Field)
+
+@inline function combine_axes(f::typeof(ifelse), mask::Field, true_::Field, false_::Field)
     if issubset(true_.dims, mask.dims) && issubset(false_.dims, mask.dims)
         return format(mask)
     else
-        get_size_ifelse(shape(mask), combine_axes(f, format(true_), format(false_)))
+        return get_size_ifelse(shape(mask), combine_axes(f, format(true_), format(false_)))
     end
 end
 
-@inline function combine_axes(f::Val{:ifelse}, mask::Field, true_::Real, false_::Field)
+@inline function combine_axes(f::typeof(ifelse), mask::Field, true_::Real, false_::Field)
     if issubset(false_.dims, mask.dims)
         return format(mask)
     else
-        get_size_ifelse(format(mask), format(false_))
+        return get_size_ifelse(format(mask), format(false_))
     end
 end
 
-@inline function combine_axes(f::Val{:ifelse}, mask::Field, true_::Field, false_::Real)
+@inline function combine_axes(f::typeof(ifelse), mask::Field, true_::Field, false_::Real)
     if issubset(true_.dims, mask.dims)
         return format(mask)
     else
@@ -174,21 +181,21 @@ end
     end
 end
 
-@inline combine_axes(f::Val{<:Any}, arg1, arg2, rest...)            = combine_axes(f, combine_axes(f, format(arg1), format(arg2)), rest...)
-@inline combine_axes(f::Val{<:Any}, arg, n::Nothing)                = combine_axes(f, format(arg))
-@inline combine_axes(f::Val{<:Any}, n::Nothing, arg)                = combine_axes(f, format(arg))
-@inline combine_axes(f::Val{<:Any}, arg)                            = format(arg)
-@inline combine_axes(f::Val{<:Any}, shape::FieldShape, t0::Tuple{}) = combine_axes(f, format(shape))
-@inline combine_axes(f::Val{<:Any}, t0::Tuple{}, shape::FieldShape) = combine_axes(f, format(shape))
+@inline combine_axes(f::Function, arg1, arg2, rest...)            = combine_axes(f, combine_axes(f, format(arg1), format(arg2)), rest...)
+@inline combine_axes(f::Function, arg, n::Nothing)                = combine_axes(f, format(arg))
+@inline combine_axes(f::Function, n::Nothing, arg)                = combine_axes(f, format(arg))
+@inline combine_axes(f::Function, arg)                            = format(arg)
+@inline combine_axes(f::Function, shape::FieldShape, t0::Tuple{}) = combine_axes(f, format(shape))
+@inline combine_axes(f::Function, t0::Tuple{}, shape::FieldShape) = combine_axes(f, format(shape))
 
-@inline function combine_axes(f::Val{<:Any}, A::FieldShape, B::FieldShape)::FieldShape
+@inline function combine_axes(f::Function, A::FieldShape, B::FieldShape)::FieldShape
 
     if ordered_subset(A.dims, B.broadcast_dims)
-        out_dims = intersect(B.broadcast_dims, union(A.dims, B.dims))
-        broadcast_dims = union(B.broadcast_dims, A.broadcast_dims)
+        out_dims = Tuple(intersect(B.broadcast_dims, union(A.dims, B.dims)))
+        broadcast_dims = Tuple(union(B.broadcast_dims, A.broadcast_dims))
     elseif ordered_subset(B.dims, A.broadcast_dims)
-        out_dims = intersect(A.broadcast_dims, union(A.dims, B.dims))
-        broadcast_dims = union(A.broadcast_dims, B.broadcast_dims)
+        out_dims = Tuple(intersect(A.broadcast_dims, union(A.dims, B.dims)))
+        broadcast_dims = Tuple(union(A.broadcast_dims, B.broadcast_dims))
     else
         out_dims = promote_dims(A.dims, B.dims)
         broadcast_dims = promote_dims(A.broadcast_dims, B.broadcast_dims)
@@ -196,18 +203,16 @@ end
 
     out_size = get_size(out_dims, A, B)
 
-    return FieldShape(Tuple(out_dims), out_size, Tuple(broadcast_dims))
+    return FieldShape(out_dims, out_size, broadcast_dims)
 end
 
 
 # -----------------------------------------------------------------------------------------------------------------------------------------
 
-# Custom similar(): Creates output object
+# Creates uninitialized output object
 function Base.similar(bc::Broadcasted{ArrayStyle{Field}}, ::Type{ElType}) where ElType
-    @bp
-    axes_offsets = getproperty.(axes(bc), :offset)
-    offsets = Dict(bc.axes.dims[i] => axes_offsets[i] for i in 1:length(axes_offsets))
-    Field(bc.axes.dims, similar(Array{ElType}, parent.(axes(bc))), bc.axes.broadcast_dims, origin = offsets)
+    offsets = getproperty.(axes(bc), :start) .- 1
+    Field(bc.axes.dims, similar(Array{ElType}, getproperty.(axes(bc), :stop) .- offsets), bc.axes.broadcast_dims, offsets)
 end
 
 # -----------------------------------------------------------------------------------------------------------------------------------------
@@ -235,21 +240,18 @@ end
 
 # -----------------------------------------------------------------------------------------------------------------------------------------
 
-# Custom preprocess(): Inorder to pass output dimensions to extrude
+# Custom preprocess(): Calculates which dimensions will need to be dropped in getindex()
 @inline Base.Broadcast.preprocess(dest::FieldShape, A::Field) = f_extrude(Base.Broadcast.broadcast_unalias(dest, A), dest)
 
-@inline f_extrude(A::Field, dest::FieldShape) = Extruded(A, f_newindexer(A.dims, dest.broadcast_dims, dest.axes)...)
+@inline f_extrude(A::Field, dest::FieldShape) = Extruded(A, f_newindexer(A.dims, dest.dims, dest.axes), 0)
 @inline f_extrude(A::Field{<:Any, 0}, dest::FieldShape) = (A[],)
 
 # Idefault not needed... Extruded expects a third argument
-@inline f_newindexer(dims::Tuple, b_dims::Tuple{}, ax::Tuple) = (), ()
+@inline f_newindexer(dims::Tuple{}, b_dims::Tuple, ax::Tuple) = ()
 @inline function f_newindexer(dims::Tuple, b_dims::Tuple, ax::Tuple)
-    ind1 = b_dims[1]
-    next_keep = ind1 in dims
-
-    keep, Idefault = f_newindexer(dims, Base.tail(b_dims), ax)
-    
-    (next_keep, keep...) , (0, Idefault...)
+    dim = dims[1]
+    keep = f_newindexer(Base.tail(dims), b_dims, ax)
+    return (get_dim_ind(b_dims, dim), keep...)
 end 
 
 
@@ -257,7 +259,6 @@ end
 
 # Custom getindex(): Drops additional dimensions to access array size
 @inline function Base.getindex(bc::Broadcasted{ArrayStyle{Field}}, I::Union{Integer,CartesianIndex})
-    @boundscheck Base.Broadcast.checkbounds(bc, I)
     @inbounds f_broadcast_getindex(bc, I)
 end
 
@@ -288,16 +289,8 @@ Base.@propagate_inbounds function f_broadcast_getindex(b::Extruded, i)
     return b.x[f_newindex(i, b.keeps)]
 end
 
-@inline f_newindex(I::CartesianIndex, keep) = CartesianIndex(_f_newindex(Val{keep[1]}(), I.I, keep)) # TODO: should be Base.tail(keep) aber langsam... cheggs ned
-
+@inline f_newindex(I::CartesianIndex, keep) = CartesianIndex(_f_newindex(I.I, keep))
 @inline f_newindex(i::Integer, keep::Tuple{}) = CartesianIndex(())
+@inline f_newindex(i::Integer, keep::Tuple) = i
 
-# Dropping dims
-@inline _f_newindex(sym::Val{true}, I, keep) = (I[1], _f_newindex(Val{keep[1]}(), Base.tail(I), Base.tail(keep))...)
-@inline _f_newindex(sym::Val{false}, I, keep) = _f_newindex(Val{keep[1]}(), Base.tail(I), Base.tail(keep))
-@inline _f_newindex(sym::Val{true}, I::Tuple{Int64}, keep::Tuple{Bool}) = (I[1],)
-@inline _f_newindex(sym::Val{false}, I::Tuple{Int64}, keep::Tuple{Bool}) = ()
-
-
-# TODO: Verify if unnecessary
-# @inline f_newindex(i::Integer, keep::Tuple, defaults) = i
+@inline _f_newindex(I, keep) = getindex.(Ref(I), keep)

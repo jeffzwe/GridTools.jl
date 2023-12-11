@@ -1,4 +1,3 @@
-using OffsetArrays
 using Debugger
 using GridTools
 
@@ -36,102 +35,51 @@ b = Field((K, Edge), reshape(collect(1.0:6.0), (2, 3)))
 A = Field((Vertex, K), reshape(collect(1.:15.), 3, 5), origin = Dict(Vertex => -2, K => -1))
 B = Field((K, Edge), reshape(ones(6), 3, 2))
 
-B_arr = OffsetArray(reshape(ones(6), 3, 2), 1:3, 1:2)
-A_arr = OffsetArray(reshape(collect(1.:15.), 3, 5), -1:1, 0:4)
-
 mask_b = cat([true true false true true ; true false false false true ;true true true true true], [true false true false true ; true false false false true ;true true true true true], dims=3)
 
 mask = Field((Vertex, K, Edge), mask_b, origin = Dict(Vertex => -2, K => -1))
 
-# edge_to_cell_table = [
-#     [1  -1];
-#     [3  -1];
-#     [3  -1];
-#     [4  -1];
-#     [5  -1];
-#     [6  -1];
-#     [1  6];
-#     [1  2];
-#     [2  3];
-#     [2  4];
-#     [4  5];
-#     [5  6]
-# ]
+edge_to_cell_table = [
+    [1  -1];
+    [3  -1];
+    [3  -1];
+    [4  -1];
+    [5  -1];
+    [6  -1];
+    [1  6];
+    [1  2];
+    [2  3];
+    [2  4];
+    [4  5];
+    [5  6]
+]
 
-# cell_to_edge_table = [
-#     [1   7   8];
-#     [8   9  10];
-#     [2   3   9];
-#     [4  10  11];
-#     [5  11  12];
-#     [6   7  12]
-# ]
+cell_to_edge_table = [
+    [1   7   8];
+    [8   9  10];
+    [2   3   9];
+    [4  10  11];
+    [5  11  12];
+    [6   7  12]
+]
 
-# cell_values = Field(Cell, [5., 6., 7., 8., 3., 4., 5., 7., 4., 3., 2., 4., 6., 7., 5., 3., 2., 2., 5.])
+cell_values = Field(Cell, [1.0, 1.0, 2.0, 3.0, 5.0, 8.0])
 
-# E2C_offset_provider = Connectivity(edge_to_cell_table, Cell, Edge, 2)
-# C2E_offset_provider = Connectivity(cell_to_edge_table, Edge, Cell, 3)
+E2C_offset_provider = Connectivity(edge_to_cell_table, Cell, Edge, 2)
+C2E_offset_provider = Connectivity(cell_to_edge_table, Edge, Cell, 3)
 
-# offset_provider = Dict{String, Union{Connectivity, Dimension}}(
-#                    "E2C" => E2C_offset_provider,
-#                    "C2E" => C2E_offset_provider
-#                 )
+offset_provider = Dict{String, Union{Connectivity, Dimension}}(
+                   "E2C" => E2C_offset_provider,
+                   "C2E" => C2E_offset_provider
+                )
 
+out = Field(Edge, zeros(Float64, 12))
 
-# a = Field(Cell, collect(1.:15.))
-# out = Field(Cell, zeros(15))
+@field_operator function fo_neighbor_sum(a::Field{Float64, 1, Tuple{Cell_}})::Field{Float64, 1, Tuple{Edge_}}
+    return neighbor_sum(a(E2C), axis=E2CDim)
+end
 
-# @field_operator function fo_neighbor_sum(a::Field{Float64, 1, Tuple{Cell_}})::Field{Float64, 1, Tuple{Edge_}}
-#     return neighbor_sum(a(E2C), axis=E2CDim)
-# end
-
-# fo_neighbor_sum(a, offset_provider=offset_provider, backend = "py", out = out)
-
-
-# @field_operator function nested_add(a::Field{Float64, 2, Tuple{Vertex_, K_}}, b::Field{Float64, 2, Tuple{K_, Edge_}})::Field{Float64, 3, Tuple{Vertex_, K_, Edge_}}
-#     return a .+ b
-# end
-
-# a = Field(Cell, collect(1.:15.))
-# b = Field(Cell, ones(15))
-# out = Field(Cell, zeros(15))
-
-# out = Field((Vertex, K, Edge), OffsetArray(zeros(3, 3, 2), -2, 0, 0))
-# # out = Field((Vertex, K, Edge), zeros(6, 2, 3))
-
-# @field_operator function test_addition(a::Field{Float64, 2, Tuple{Vertex_, K_}}, b::Field{Float64, 2, Tuple{K_, Edge_}})::Field{Float64, 3, Tuple{Vertex_, K_, Edge_}}
-#     res = nested_add(a, b)
-#     return res
-# end
-
-# a = Field(Cell, collect(1.:15.))
-# out = Field(Edge, zeros(Float64, 12))
-
-# @field_operator function fo_neighbor_sum(a::Field{Float64, 1, Tuple{Cell_}})::Field{Float64, 1, Tuple{Edge_}}
-#     return neighbor_sum(a(E2C), axis=E2CDim)
-# end
-
-# fo_neighbor_sum(a, offset_provider=offset_provider, out = out)
-
-# x = Field((Cell, K, Edge), reshape(collect(1.:36.), (3, 6, 2)))
-# k_values = [[2 4];[3 5];[4 6];[1 6];[2 5];[3 4]]
-
-# Kf_ = Dimension{:Kf_, HORIZONTAL}
-# Kff_ = Dimension{:Kff_, LOCAL}
-# Kf = Kf_()
-# Kff = Kff_()
-# KK = FieldOffset("KK", source=K, target=(Kf, Kff))
-# K2f = Connectivity(k_values, K, Kf, 2)
-# offset_provider = Dict{String, Connectivity}("KK" => K2f)
-
-# @field_operator function hoi(x::Field{Float64, 3, Tuple{Cell_, K_, Edge_}}) 
-#     return x(KK)
-# end
-
-# @run hoi(x, out=out, offset_provider= offset_provider)
-
-
-
+fo_neighbor_sum(cell_values, offset_provider=offset_provider, out = out)
 
 
 

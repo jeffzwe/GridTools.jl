@@ -3,7 +3,7 @@
 # I've added my conversion attempt to GridTools/notes/Snippets.jl
 # To test the precompilation remove the line below "__precompile__(false)" and attempt a precompilation (manually or via running the tests)
 
-__precompile__(false)
+# __precompile__(false)
 module GridTools
 
 using Printf
@@ -17,7 +17,7 @@ using Debugger
 
 import Base.Broadcast: Extruded, Style, BroadcastStyle, ArrayStyle ,Broadcasted
 
-export Dimension, DimensionKind, HORIZONTAL, VERTICAL, LOCAL, Field, Connectivity, FieldOffset, neighbor_sum, max_over, min_over, where, concat, @field_operator, @module_vars, get_dim_name, get_dim_kind, slice, copyfield!
+export Dimension, DimensionKind, HORIZONTAL, VERTICAL, LOCAL, Field, Connectivity, FieldOffset, neighbor_sum, max_over, min_over, where, concat, @field_operator, slice, copyfield!, get_dim_name, get_dim_kind, get_dim_ind
 
 
 # Lib ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -31,19 +31,31 @@ struct VERTICAL <: DimensionKind end
 struct LOCAL <: DimensionKind end
 
 """
-    abstract type Dimension
+    struct Dimension
 
-Create a new Dimension.
+
+Create a new Dimension. Per default a dimension is horizontal.
 
 # Examples
 ```julia-repl
-julia> struct Cell_ <: Dimension end
+julia> Cell_ = Dimension(:Cell_)
 julia> Cell = Cell_()
 ```
+
+In order to create a local dimension one needs to adhere to a particular naming scheme as shown below:
+
+# Examples
+```julia-repl
+julia> V2EDim_ = Dimension(:V2E_, LOCAL)
+julia> V2EDim = V2EDim_()
 """
 struct Dimension{name, kind <: DimensionKind} end
 
-Base.length(d::Dimension) = 1
+function Dimension(sym::Symbol, kind = HORIZONTAL)
+    return Dimension{sym, kind}
+end
+
+Base.length(d::Dimension)::Int64 = 1
 Base.iterate(d::Dimension, state=1) = state==1 ? (d, state+1) : nothing
 Base.getindex(d::Dimension, offset::Integer) = d, offset            # TODO: Unnecessary?
 get_dim_name(d::Dimension) = string(typeof(d).parameters[1])[1:end-1]
@@ -59,18 +71,18 @@ You can transform fields (or tuples of fields) over one domain to another domain
 
 # Examples
 ```julia-repl
-julia> vertex2edge = FieldOffset("V2E", source=(Edge,), target=(Vertex, V2EDim))
-FieldOffset("V2E", (Edge_(),), (Vertex_(), V2EDim_()))
+julia> V2E = FieldOffset("V2E", source=Edge, target=(Vertex, V2EDim))
+FieldOffset("V2E", Dimension{:Edge_, HORIZONTAL}(), (Dimension{:Vertex_, HORIZONTAL}(), Dimension{:V2E_, LOCAL}()))
 ```
 """
 struct FieldOffset
     name::String
-    source::Dimension          # TODO: can source have multiple dimensions?
+    source::Dimension
     target::Tuple{Vararg{Dimension}}
 
     function FieldOffset(name::String; source::Dimension, target::Union{Dimension, Tuple{Vararg{Dimension}}})::FieldOffset
         if length(target) > 1 @assert all(get_dim_kind.(Base.tail(target)) .== LOCAL) ("All but the first dimension in an offset must be local dimensions.") end
-        new(name, source, Tuple(target))
+        return new(name, source, Tuple(target))
     end
 end
 
@@ -79,17 +91,26 @@ Base.getindex(f_off::FieldOffset, ind::Integer) = f_off, ind
 
 # Field struct --------------------------------------------------------------------
 
-# TODO: check for #dimension at compile time and not runtime
-# TODO: <: AbstractArray{T,N} is not needed... but then we have to define our own length and iterate function for Fields
 """
-    Field(dims::Tuple, data::Array, broadcast_dims::Tuple)
+    Field(dims::Tuple, data::Array, broadcast_dims::Tuple; origin::Dic{Dimension, Int64})
 
 Fields store data as a multi-dimensional array, and are defined over a set of named dimensions. 
 
 # Examples
 ```julia-repl
 julia> new_field = Field((Cell, K), fill(1.0, (3,2)))
-3x2  Field with dims (Main.GridTools.Cell_(), Main.GridTools.K_()) and broadcasted_dims (Main.GridTools.Cell_(), Main.GridTools.K_()):
+3×2 Float64 Field with dimensions ("Cell", "K") with indices 1:3×1:2:
+ 1.0  1.0
+ 1.0  1.0
+ 1.0  1.0
+```
+
+Each dimension can be offset by a certain index. This changes the index-range of the Field.
+
+# Examples
+```julia-repl
+julia> new_field = Field((Cell, K), fill(1.0, (3,2)), origin = Dict(K => 1))
+3×2 Float64 Field with dimensions ("Cell", "K") with indices 1:3×2:3:
  1.0  1.0
  1.0  1.0
  1.0  1.0
@@ -103,37 +124,38 @@ The call itself must happen in a field_operator since it needs the functionality
 
 # Examples
 ```julia-repl
-julia> E2C = gtx.FieldOffset("E2C", source=CellDim, target=(EdgeDim,E2CDim))
-julia> field = Field((Cell,), ones(5))
+julia> E2C = FieldOffset("E2C", source=Cell, target=(Edge, E2CDim))
+julia> field = Field(Cell, ones(5))
 
 ...
-julia> field(E2C())
-julia> field(E2C(1))
+julia> field(E2C)
+julia> field(E2C[1])
 ...
 ```
 """
+# TODO: check for #dimension at compile time and not runtime
+# TODO: <: AbstractArray{T,N} is not needed... but then we have to define our own length and iterate function for Fields
 # TODO sequence of types: Do BD, T, N. 
 # Error showing value of type Field{Tuple{Dimension{:Cell_, HORIZONTAL}, Dimension{:K_, HORIZONTAL}}, Float64, 2, Tuple{Dimension{:Cell_, HORIZONTAL}, Dimension{:K_, HORIZONTAL}}}:
 # ERROR: CanonicalIndexError: getindex not defined for Field{Tuple{Dimension{:Cell_, HORIZONTAL}, Dimension{:K_, HORIZONTAL}}, Float64, 2, Tuple{Dimension{:Cell_, HORIZONTAL}, Dimension{:K_, HORIZONTAL}}}
 
-struct Field{T <: Union{AbstractFloat, Integer}, N, BD <: Tuple{Vararg{Dimension}}, D <: NTuple{N, Dimension}} <: AbstractArray{T,N}
-    dims::D
-    data::Array{T,N}
-    broadcast_dims::BD
+struct Field{T <: Union{AbstractFloat, Integer}, N, B_Dim <: Tuple{Vararg{Dimension}}, Dim <: NTuple{N, Dimension}, D <: AbstractArray{T,N}} <: AbstractArray{T,N}
+    dims::Dim
+    data::D
+    broadcast_dims::B_Dim
     origin::NTuple{N, Int64}
-    
-    function Field(dims::D, data::Array{T,N}, broadcast_dims::BD = dims; origin = Dict{Dimension, Int64}()) where {T <: Union{AbstractFloat, Integer}, N, BD <: Tuple{Vararg{Dimension}}, D <: NTuple{N, Dimension}}
-        if ndims(data) != 0 @assert length(dims) == ndims(data) end
-        offsets = Tuple([get(origin, dim, 0) for dim in dims])
-        return new{T,N,BD,D}(dims, data, broadcast_dims, offsets)
-    end
-
-    function Field(dim::Dimension, data::Array{T,N}, broadcast_dims::Union{Dimension,BD} = dim; origin = Dict{Dimension, Int64}()) where {T <: Union{AbstractFloat, Integer}, N, BD <: NTuple{N, Dimension}}
-        if ndims(data) != 0 @assert ndims(data) == 1 end
-        return Field(Tuple(dim), data, Tuple(broadcast_dims), origin = origin)
-    end
 end
 
+function Field(dims::Dim, data::D, broadcast_dims::B_Dim = dims; origin::Dict{<:Dimension, Int64} = Dict{Dimension, Int64}()) where {T <: Union{AbstractFloat, Integer}, N, B_Dim <: Tuple{Vararg{Dimension}}, Dim <: NTuple{N, Dimension}, D <: AbstractArray{T,N}}
+    if ndims(data) != 0 @assert length(dims) == ndims(data) end
+    offsets = Tuple([get(origin, dim, 0) for dim in dims])
+    return Field(dims, data, broadcast_dims, offsets)
+end
+
+function Field(dim::Dimension, data::D, broadcast_dims::Union{Dimension,B_Dim} = dim; origin::Dict{<:Dimension, Int64} = Dict{Dimension, Int64}()) where {T <: Union{AbstractFloat, Integer}, N, B_Dim <: NTuple{N, Dimension}, D <: AbstractArray{T,N}}
+    if ndims(data) != 0 @assert ndims(data) == 1 end
+    return Field(Tuple(dim), data, Tuple(broadcast_dims), origin = origin)
+end
 
 (field_call::Field)(f_off::Tuple{FieldOffset, <:Integer})::Field = field_call(f_off...)
 function (field_call::Field)(f_off::FieldOffset, ind::Integer = 0)::Field
@@ -173,7 +195,7 @@ end
 
 # Field struct interfaces
 # (d::Dict{Dimension, Int64})(k::Dimension)::Int64 = d[k]
-Base.axes(F::Field)::Tuple = IdOffsetRange.(axes(F.data), Tuple(F.origin))
+Base.axes(F::Field)::Tuple = map((i,j) -> i .+ j, axes(F.data), F.origin)
 Base.size(F::Field)::Tuple = size(F.data)
 Base.convert(t::Type{T}, F::Field) where {T<:Number} = Field(F.dims, convert.(t, F.data), F.broadcast_dims)
 @propagate_inbounds function Base.getindex(F::Field{T,N}, inds::Vararg{Int,N}) where {T,N}
@@ -225,6 +247,15 @@ include("gt2py/gt2py.jl")
 
 # Helper functions for fields -------------------------------------------------------------------
 
+"""
+    copyfield!(target::Field, source::Field)
+
+Takes a copies the data from a source field to a target fields (equivalent to target .= source). Also works with tuples of fields.
+
+# Examples
+```julia-repl
+julia> copyfields!((a, b), (c, d))
+"""
 function copyfield!(target::Tuple{Vararg{Field}}, source::Tuple{Vararg{Field}})
     for i in 1:length(target)
         target[i] .= source[i]
@@ -347,12 +378,11 @@ end
 """
     @field_operator
 
-The field_operator macro takes a function definition and creates a run environment for the function call within the GridTools package. It enables the additional argument "offset_provider", "backend", etc.
+The field_operator macro takes a function definition and creates a run environment for the function call within the GridTools package. It enables the additional argument "offset_provider", "backend" and "out.
 
 # Examples
 ```julia-repl
-julia> @field_operator addition(x) = x + x
-addition (generic function with 1 method)
+julia> @field_operator addition(x::Int64) = x + x
 ...
 ```
 """
@@ -367,6 +397,5 @@ macro field_operator(expr::Expr)
 end
 
 generate_unique_name(name::Symbol, value::Integer = 0) = Symbol("$(name)ᐞ$(value)")
-
 
 end
