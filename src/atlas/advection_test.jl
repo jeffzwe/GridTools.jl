@@ -2,6 +2,7 @@
 using Printf
 using Debugger
 using Statistics
+using Profile
 using GridTools
 
 Cell_ = Dimension{:Cell_, HORIZONTAL}
@@ -30,11 +31,11 @@ include("metric.jl")
 include("advection.jl")
 
 
-grid = atlas.StructuredGrid("O32")
+grid = atlas.StructuredGrid("O50")
 mesh = AtlasMesh(grid, num_level = 30)
 
 δt = 1800.0  # time step in s
-niter = 20
+niter = 50
 eps = 1.0e-8
 
 metric = m_from_mesh(mesh)
@@ -64,10 +65,10 @@ end
 
 @field_operator function initial_rho(
     mesh_radius::Float64,
-    mesh_xydeg_x::Field{Float64, 1, Tuple{Vertex_}},
-    mesh_xydeg_y::Field{Float64, 1, Tuple{Vertex_}},
-    mesh_vertex_ghost_mask::Field{Bool, 1, Tuple{Vertex_}}
-    )::Field{Float64, 1, Tuple{Vertex_, K_}}
+    mesh_xydeg_x::Field{Tuple{Vertex_}, Float64},
+    mesh_xydeg_y::Field{Tuple{Vertex_}, Float64},
+    mesh_vertex_ghost_mask::Field{Tuple{Vertex_}, Bool}
+    )::Field{Tuple{Vertex_, K_}, Float64}
     lonc = 0.5 * pi
     latc = 0.0
     _deg2rad = 2.0 * pi / 360.0
@@ -94,12 +95,12 @@ initial_rho(
 )
 
 @field_operator function initial_velocity(
-    mesh_xydeg_x::Field{Float64, 1, Tuple{Vertex_}},
-    mesh_xydeg_y::Field{Float64, 1, Tuple{Vertex_}},
-    metric_gac::Field{Float64, 1, Tuple{Vertex_}},
-    metric_g11::Field{Float64, 1, Tuple{Vertex_}},
-    metric_g22::Field{Float64, 1, Tuple{Vertex_}}
-    )::Tuple{Field{Float64, 1, Tuple{Vertex_, K_}}, Field{Float64, 1, Tuple{Vertex_, K_}}, Field{Float64, 0, Tuple{Vertex_, K_}}}
+    mesh_xydeg_x::Field{Tuple{Vertex_}, Float64},
+    mesh_xydeg_y::Field{Tuple{Vertex_}, Float64},
+    metric_gac::Field{Tuple{Vertex_}, Float64},
+    metric_g11::Field{Tuple{Vertex_}, Float64},
+    metric_g22::Field{Tuple{Vertex_}, Float64}
+    )::Tuple{Field{Tuple{Vertex_, K_}, Float64}, Field{Tuple{Vertex_, K_}, Float64}, Field{Tuple{Vertex_, K_}, Float64}}
     _deg2rad = 2.0 * pi / 360.0
     mesh_xyrad_x, mesh_xyrad_y = mesh_xydeg_x .* _deg2rad, mesh_xydeg_y .* _deg2rad
     u0 = 22.238985328911745
@@ -128,39 +129,74 @@ initial_velocity(
 
 copyfield!(state_next.vel, state.vel)
 
-println("min max avg of initial rho = $(minimum(state.rho.data)) , $(maximum(state.rho.data)) , $(mean(state.rho.data))")
+# println("min max avg of initial rho = $(minimum(state.rho.data)) , $(maximum(state.rho.data)) , $(mean(state.rho.data))")
 
 tmp_fields["tmp_vertex_1"] .= reshape(collect(0.:mesh.num_level-1), (1, mesh.num_level))
 nabla_z(tmp_fields["tmp_vertex_1"], level_indices, mesh.num_level, out=tmp_fields["tmp_vertex_2"], offset_provider = mesh.offset_provider)
 
+upwind_scheme(
+            state.rho,
+            δt,
+            mesh.vol,
+            metric.gac,
+            state.vel[1],
+            state.vel[2],
+            state.vel[3],
+            mesh.pole_edge_mask,
+            mesh.dual_face_orientation,
+            mesh.dual_face_normal_weighted_x,
+            mesh.dual_face_normal_weighted_y,
+            out = state_next.rho,
+            offset_provider = mesh.offset_provider
+        )
 
-for i in 1:niter
-
+@profile for i in 1:10
     upwind_scheme(
-        state.rho,
-        δt,
-        mesh.vol,
-        metric.gac,
-        state.vel[1],
-        state.vel[2],
-        state.vel[3],
-        mesh.pole_edge_mask,
-        mesh.dual_face_orientation,
-        mesh.dual_face_normal_weighted_x,
-        mesh.dual_face_normal_weighted_y,
-        out = state_next.rho,
-        offset_provider = mesh.offset_provider
-    )
-
-    println("Timestep $i")
-
-    temp = state
-    global state = state_next
-    global state_next = temp
-
-    update_periodic_layers(mesh, state.rho)
+            state.rho,
+            δt,
+            mesh.vol,
+            metric.gac,
+            state.vel[1],
+            state.vel[2],
+            state.vel[3],
+            mesh.pole_edge_mask,
+            mesh.dual_face_orientation,
+            mesh.dual_face_normal_weighted_x,
+            mesh.dual_face_normal_weighted_y,
+            out = state_next.rho,
+            offset_provider = mesh.offset_provider
+        )
 end
+Profile.print()
 
-println("min max sum of final rho = $(minimum(state.rho.data)) , $(maximum(state.rho.data)) , $(sum(state.rho.data))")
-println("Final Vel0 sum after $niter iterations: $(sum(state.vel[1].data))")
-println("Final Vel1 sum after $niter iterations: $(sum(state.vel[2].data))")
+# for i in 1:niter
+
+#     upwind_scheme(
+#         state.rho,
+#         δt,
+#         mesh.vol,
+#         metric.gac,
+#         state.vel[1],
+#         state.vel[2],
+#         state.vel[3],
+#         mesh.pole_edge_mask,
+#         mesh.dual_face_orientation,
+#         mesh.dual_face_normal_weighted_x,
+#         mesh.dual_face_normal_weighted_y,
+#         out = state_next.rho,
+#         offset_provider = mesh.offset_provider,
+#         backend = "py"
+#     )
+
+#     # println("Timestep $i")
+
+#     temp = state
+#     global state = state_next
+#     global state_next = temp
+
+#     update_periodic_layers(mesh, state.rho)
+# end
+
+# println("min max sum of final rho = $(minimum(state.rho.data)) , $(maximum(state.rho.data)) , $(sum(state.rho.data))")
+# println("Final Vel0 sum after $niter iterations: $(sum(state.vel[1].data))")
+# println("Final Vel1 sum after $niter iterations: $(sum(state.vel[2].data))")

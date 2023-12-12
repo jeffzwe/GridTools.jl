@@ -1,10 +1,10 @@
 
 struct StateContainer
-    rho::Field{<:AbstractFloat, 2, Tuple{Vertex_, K_}}
+    rho::Field{Tuple{Vertex_, K_}, <:AbstractFloat}
     vel::Tuple{
-        Field{<:AbstractFloat, 2, Tuple{Vertex_, K_}},
-        Field{<:AbstractFloat, 2, Tuple{Vertex_, K_}},
-        Field{<:AbstractFloat, 2, Tuple{Vertex_, K_}},
+        Field{Tuple{Vertex_, K_}, <:AbstractFloat},
+        Field{Tuple{Vertex_, K_}, <:AbstractFloat},
+        Field{Tuple{Vertex_, K_}, <:AbstractFloat},
     }
 end
 

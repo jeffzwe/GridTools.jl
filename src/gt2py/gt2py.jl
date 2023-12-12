@@ -37,6 +37,7 @@ const scalar_types = Dict()
 const py_scalar_types = Dict()
 const py_dim_kind = Dict()
 const builtin_py_op = Dict()
+const py_backends = Dict()
 
 function __init__()
 
@@ -79,7 +80,7 @@ comp_op = Set([:(==), :(!=), :(<), :(<=), :(>), :(>=), :.==, :.!=, :.<, :.<=, :.
 
 math_ops = union(bin_op, unary_op, comp_op)
 
-disallowed_op = Set([:hcat, :vcat]) #TODO: Add more forbidden operations for translation to gt4py
+disallowed_op = Set([:hcat, :vcat, :concat]) #TODO: Link concat as soon as it's implemented in gt4py. Add further "forbidden" operations
 
 builtin_op = Dict(
     :max_over => max_over, 
@@ -125,17 +126,7 @@ CLOSURE_VARS::Dict = Dict()
 
 # Methods -----------------------------------------------------------------------------------
 
-function py_field_operator(fo, backend = nothing, grid_type = py"None"o, operator_attributes = Dict())
-
-    run_gtfn_cached_cmake = gtfn_cpu.otf_compile_executor.CachedOTFCompileExecutor(
-    name="run_gtfn_cached_cmake",
-    otf_workflow=gtfn_cpu.workflow.CachedStep(step=gtfn_cpu.run_gtfn.executor.otf_workflow.replace(
-        compilation=gtfn_cpu.compiler.Compiler(
-            cache_strategy=gtfn_cpu.cache.Strategy.PERSISTENT,
-            builder_factory=cmake.CMakeFactory(cmake_build_type=cmake.BuildType.RELEASE)
-        )),
-    hash_function=gtfn_cpu.compilation_hash),
-    )
+function py_field_operator(fo, backend = py_backends["gpu"], grid_type = py"None"o, operator_attributes = Dict())
 
     foast_definition_node, closure_vars = jast_to_foast(fo.expr, fo.closure_vars)
     loc = foast_definition_node.location
@@ -158,7 +149,7 @@ function py_field_operator(fo, backend = nothing, grid_type = py"None"o, operato
             foast_node=foast_node,
             closure_vars=closure_vars,
             definition=py"None"o,
-            backend=run_gtfn_cached_cmake,
+            backend=backend,
             grid_type=grid_type,
         )
 end
@@ -200,44 +191,48 @@ py_args(args::Tuple) = [map(convert_type, args)...]
 py_args(arg) = convert_type(arg)
 py_args(n::Nothing) = nothing
 
-function convert_type(a)
-    if typeof(a) <: Field
-
-        b_dims = []
-        for dim in a.broadcast_dims
-            kind = py_dim_kind[(get_dim_kind(dim))]
-            push!(b_dims, gtx.Dimension(get_dim_name(dim), kind = kind)) # NOTE: this requires strict naming rules for dimensions
-        end
-
-        if typeof(a.data) <: Array
-            new_data = a.data
-        else
-            new_data = np.asarray(a.data)
-            @warn "Dtype of the Field: $a is not concrete. Data must be copied to Python which may affect performance. Try using dtypes <: Array."
-        end
-
-        offset = Dict(convert_type(dim) => a.origin[i] for (i, dim) in enumerate(a.dims))
-
-        return gtx.as_field(b_dims, new_data, origin = offset)
-
-    elseif typeof(a) <: Connectivity
-    
-        source_kind = py_dim_kind[(get_dim_kind(a.source))]
-        source_dim  = gtx.Dimension(get_dim_name(a.source), kind=source_kind)
-        
-        target_kind = py_dim_kind[(get_dim_kind(a.target))]
-        target_dim = gtx.Dimension(get_dim_name(a.target), kind=target_kind)
-
-        @assert typeof(a.data) <: Array "Use concrete types for the data Array of the following Connectivity: $a."
-
-        # account for different indexing in python
-        return gtx.NeighborTableOffsetProvider(a.data .- 1, target_dim, source_dim, a.dims)
-    elseif typeof(a) <: Dimension
-        return gtx.Dimension(get_dim_name(a), kind=py_dim_kind[get_dim_kind(a)])
-    else
-        @assert Symbol(typeof(a)) in keys(scalar_types) ("The type of argument $(a) is not a valid argument type to a field operator.")
-        return a
+function convert_type(a::Field)
+    b_dims = []
+    for dim in a.broadcast_dims
+        kind = py_dim_kind[(get_dim_kind(dim))]
+        push!(b_dims, gtx.Dimension(get_dim_name(dim), kind = kind)) # NOTE: this requires strict naming rules for dimensions
     end
+
+    if typeof(a.data) <: Array
+        new_data = a.data
+    else
+        new_data = np.asarray(a.data)
+        @warn "Dtype of the Field: $a is not concrete. Data must be copied to Python which may affect performance. Try using dtypes <: Array."
+    end
+
+    offset = Dict(convert_type(dim) => a.origin[i] for (i, dim) in enumerate(a.dims))
+
+    # py_field = gtx.as_field(b_dims, a.data, origin = offset)      #TODO: as_field copies the data. This effects performance and the data returned in out. 
+    py_field = gtx.np_as_located_field(b_dims..., origin=offset)(new_data)
+
+    return py_field
+end
+
+function convert_type(a::Connectivity)
+    source_kind = py_dim_kind[(get_dim_kind(a.source))]
+    source_dim  = gtx.Dimension(get_dim_name(a.source), kind=source_kind)
+    
+    target_kind = py_dim_kind[(get_dim_kind(a.target))]
+    target_dim = gtx.Dimension(get_dim_name(a.target), kind=target_kind)
+
+    @assert typeof(a.data) <: Array "Use concrete types for the data Array of the following Connectivity: $a."
+
+    # account for different indexing in python
+    return gtx.NeighborTableOffsetProvider(ifelse.(a.data .!= -1, a.data .- 1, a.data), target_dim, source_dim, a.dims)
+end
+
+function convert_type(a::Dimension)
+    return gtx.Dimension(get_dim_name(a), kind=py_dim_kind[get_dim_kind(a)])
+end
+
+function convert_type(a::Any)
+    @assert Symbol(typeof(a)) in keys(scalar_types) ("The type of argument $(a) is not a valid argument type to a field operator.")
+    return a
 end
 
 # Remove aliases -------------------------------------------------------------------------
@@ -349,8 +344,23 @@ function init_py_utils()
     :max => gtx.maximum
     )
 
+    py_backends_init = Dict(
+        "cpu" => roundtrip.executor,
+        "gpu" => gtfn_cpu.otf_compile_executor.CachedOTFCompileExecutor(
+                    name="run_gtfn_cached_cmake",
+                    otf_workflow=gtfn_cpu.workflow.CachedStep(step=gtfn_cpu.run_gtfn.executor.otf_workflow.replace(
+                        compilation=gtfn_cpu.compiler.Compiler(
+                            cache_strategy=gtfn_cpu.cache.Strategy.PERSISTENT,
+                            builder_factory=cmake.CMakeFactory(cmake_build_type=cmake.BuildType.RELEASE)
+                            )
+                        ),
+                    hash_function=gtfn_cpu.compilation_hash),
+                )
+    )
+
     copy!(scalar_types, scalar_types_init)
     copy!(py_scalar_types, py_scalar_types_init)
     copy!(py_dim_kind, py_dim_kind_init)
     copy!(builtin_py_op, builtin_py_op_init)
+    copy!(py_backends, py_backends_init)
 end

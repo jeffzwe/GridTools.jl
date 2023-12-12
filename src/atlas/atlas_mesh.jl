@@ -99,7 +99,7 @@ struct AtlasMesh
 
     # poles
     pole_edges::Array # list of all pole edges
-    pole_edge_mask::Field{Bool, 1, Tuple{Edge_}}
+    pole_edge_mask::Field{Tuple{Edge_}, Bool}
     pole_edge_mask_np::Array
 
     # remote indices: for each geometric entity it's remote index
@@ -110,25 +110,25 @@ struct AtlasMesh
     edge_flags::Array
     cell_flags::Array
 
-    vertex_ghost_mask::Field{Bool, 1, Tuple{Vertex_}}
+    vertex_ghost_mask::Field{Tuple{Vertex_}, Bool}
 
     # geometry
     radius::Float64
-    xydeg_x::Field{<:AbstractFloat, 1, Tuple{Vertex_}}
-    xydeg_y::Field{<:AbstractFloat, 1, Tuple{Vertex_}}
+    xydeg_x::Field{Tuple{Vertex_}, <:AbstractFloat}
+    xydeg_y::Field{Tuple{Vertex_}, <:AbstractFloat}
     xydeg_np::Array
     xyrad::Array
     xyarc::Array
     xyz::Array
 
-    vol::Field{<:AbstractFloat, 1, Tuple{Vertex_}}
+    vol::Field{Tuple{Vertex_}, <:AbstractFloat}
     vol_np::Array
 
-    dual_face_normal_weighted_x::Field{<:AbstractFloat, 1, Tuple{Edge_}}
-    dual_face_normal_weighted_y::Field{<:AbstractFloat, 1, Tuple{Edge_}}
+    dual_face_normal_weighted_x::Field{Tuple{Edge_}, <:AbstractFloat}
+    dual_face_normal_weighted_y::Field{Tuple{Edge_}, <:AbstractFloat}
     dual_face_normal_weighted_np::Array
 
-    dual_face_orientation::Field{<:AbstractFloat, 2, Tuple{Vertex_, V2EDim_}}
+    dual_face_orientation::Field{Tuple{Vertex_, V2EDim_}, <:AbstractFloat}
 
     dual_face_orientation_np::Array
 

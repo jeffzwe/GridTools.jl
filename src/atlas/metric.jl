@@ -1,9 +1,9 @@
 
 
 struct Metric
-    g11::Field{<:AbstractFloat, 1, Tuple{Vertex_}}
-    g22::Field{<:AbstractFloat, 1, Tuple{Vertex_}}
-    gac::Field{<:AbstractFloat, 1, Tuple{Vertex_}}
+    g11::Field{Tuple{Vertex_}, <:AbstractFloat}
+    g22::Field{Tuple{Vertex_}, <:AbstractFloat}
+    gac::Field{Tuple{Vertex_}, <:AbstractFloat}
 end
 
 function m_from_mesh(mesh::AtlasMesh)

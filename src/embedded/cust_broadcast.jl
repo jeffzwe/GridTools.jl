@@ -244,7 +244,7 @@ end
 @inline Base.Broadcast.preprocess(dest::FieldShape, A::Field) = f_extrude(Base.Broadcast.broadcast_unalias(dest, A), dest)
 
 @inline f_extrude(A::Field, dest::FieldShape) = Extruded(A, f_newindexer(A.dims, dest.dims, dest.axes), 0)
-@inline f_extrude(A::Field{<:Any, 0}, dest::FieldShape) = (A[],)
+@inline f_extrude(A::Field{<:Any, <:Any, 0}, dest::FieldShape) = (A[],)
 
 # Idefault not needed... Extruded expects a third argument
 @inline f_newindexer(dims::Tuple{}, b_dims::Tuple, ax::Tuple) = ()

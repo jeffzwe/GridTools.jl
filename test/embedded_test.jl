@@ -2,17 +2,6 @@ using Statistics
 
 # Setup ------------------------------------------------------------------------------------------------------------------------------
 
-num_cells = 5
-num_layers = 6
-grid_shape = (num_cells, num_layers)
-a_value = 2.0
-b_value = 3.0
-
-a = Field((Cell, K), fill(a_value, grid_shape))
-b = Field((Cell, K), fill(b_value, grid_shape))
-e = Field(Edge, fill(b_value, 4))
-
-
 cell_values = Field(Cell, [1.0, 1.0, 2.0, 3.0, 5.0, 8.0])
 edge_to_cell_table = [
     [1  -1];
@@ -32,7 +21,7 @@ edge_to_cell_table = [
 E2C_offset_provider = Connectivity(edge_to_cell_table, Cell, Edge, 2)
 C2E_offset_provider = Connectivity(edge_to_cell_table, Edge, Cell, 2)
 
-offset_provider = Dict{String, Connectivity}(
+offset_provider = Dict{String, Union{Connectivity, Dimension}}(
                    "E2C" => E2C_offset_provider,
                    "C2E" => C2E_offset_provider
                 )
@@ -47,7 +36,8 @@ X = Field((Vertex, K), reshape(collect(1.:15.), 3, 5), origin = Dict(Vertex => -
 Y = Field((K, Edge), reshape(ones(6), 3, 2))
 
 mask = cat([true true false true true ; true false false false true ;true true true true true], [true false true false true ; true false false false true ;true true true true true], dims=3)
-mask_offset = Field((Vertex, K, Edge), mask_b, origin = Dict(Vertex => -2, K => -1))
+mask_offset = Field((Vertex, K, Edge), mask, origin = Dict(Vertex => -2, K => -1))
+
 # Tests ------------------------------------------------------------------------------------------------------------------------------
 
 @testset "Testset arithmetic broadcast" begin
@@ -80,7 +70,7 @@ end
 
 @testset "Testset Field-Offset call" begin
 
-    result_offset_call = [
+    result_offset_call_data = [
             1.0  0.0;
             2.0  0.0;
             2.0  0.0;
@@ -95,14 +85,16 @@ end
             5.0  8.0
     ]
 
+    result_offset_call = Field((Edge, E2CDim), result_offset_call_data)
+
     out = Field((Edge, E2CDim), zeros(Float64, (12, 2)))
 
-    @field_operator function fo_remapping(a::Field{Float64, 1, Tuple{Cell_}})::Field{Float64, 2, Tuple{Edge_, E2CDim_}}
+    @field_operator function fo_remapping(a::Field{Tuple{Cell_}, Float64})::Field{Tuple{Edge_, E2CDim_}, Float64}
         return a(E2C)
     end
 
     fo_remapping(cell_values, offset_provider=offset_provider, out = out)
-    @test  out .== result_offset_call
+    @test  out == result_offset_call
 end
 
 
@@ -110,7 +102,7 @@ end
 
     # Neighbor_sum -------------------------
 
-    result_neighbor_sum = [
+    result_neighbor_sum_data = [
         1.0,
         2.0,
         2.0,
@@ -124,23 +116,25 @@ end
         8.0,
        13.0
     ]
+
+    result_neighbor_sum = Field(Edge, result_neighbor_sum_data)
     out = Field(Edge, zeros(Float64, 12))
 
-    @field_operator function fo_neighbor_sum(a::Field{Float64, 1, Tuple{Cell_}})::Field{Float64, 1, Tuple{Edge_}}
+    @field_operator function fo_neighbor_sum(a::Field{Tuple{Cell_}, Float64})::Field{Tuple{Edge_}, Float64}
         return neighbor_sum(a(E2C), axis=E2CDim)
     end
 
-    fo_neighbor_sum(a, offset_provider=offset_provider, out = out)
-    @test out .== result_neighbor_sum
+    fo_neighbor_sum(cell_values, offset_provider=offset_provider, out = out)
+    @test out == result_neighbor_sum
 
     # Broadcast -------------------------
 
-    @test typeof(broadcast(cell_values, (Cell, K))) == Field{Float64, 1, Tuple{Dimension{:Cell_, HORIZONTAL}, Dimension{:K_, HORIZONTAL}}, Tuple{Dimension{:Cell_, HORIZONTAL}}, Vector{Float64}}
-    @test typeof(broadcast(5.0, (Cell, K))) == Field{Float64, 0, Tuple{Dimension{:Cell_, HORIZONTAL}, Dimension{:K_, HORIZONTAL}}, Tuple{}, Array{Float64, 0}}
+    @test typeof(broadcast(cell_values, (Cell, K))) == Field{Tuple{Dimension{:Cell_, HORIZONTAL}, Dimension{:K_, HORIZONTAL}}, Float64, 1, Tuple{Dimension{:Cell_, HORIZONTAL}}, Vector{Float64}}
+    @test typeof(broadcast(5.0, (Cell, K))) == Field{Tuple{Dimension{:Cell_, HORIZONTAL}, Dimension{:K_, HORIZONTAL}}, Float64, 0, Tuple{}, Array{Float64, 0}}
 
     # Where -----------------------------------------
 
-    TODO
+    #TODO
 
     # Where with offsets-----------------------------
     result_data = zeros(Float64, 3, 5, 2)
@@ -158,7 +152,7 @@ end
 
     # Convert ----------------------------
 
-    @test typeof(convert(Int64, cell_values)) == Field{Int64, 1, Tuple{Dimension{:Cell_, HORIZONTAL}}, Tuple{Dimension{:Cell_, HORIZONTAL}}, Vector{Int64}}
+    @test typeof(convert(Int64, cell_values)) == Field{ Tuple{Dimension{:Cell_, HORIZONTAL}}, Int64, 1, Tuple{Dimension{:Cell_, HORIZONTAL}}, Vector{Int64}}
 
     # Concat -----------------------------
     a_data = [1.0 1.0 1.0;
@@ -170,9 +164,10 @@ end
               NaN NaN NaN]
     b = Field((Cell, K), b_data)
 
-    result = [1.0 1.0 1.0;
+    result_data = [1.0 1.0 1.0;
               1.0 100.0 1.0;
               1.0 1.0 1.0]
+    result = Field((Cell, K), result_data)
 
-    @test concat(a, b).data .== result
+    @test concat(x, y).data == result
 end

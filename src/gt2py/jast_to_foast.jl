@@ -412,10 +412,10 @@ function from_type_hint(expr::Expr, closure_vars::Dict)
     if param_type[1] == :Tuple
         return ts.TupleType(types=[recursive_make_symbol(arg) for arg in Base.tail(param_type)])
     elseif param_type[1] == :Field
-        @assert length(param_type) == 4 ("Field type requires three arguments, got $(length(param_type)-1) in $(param_type).")
+        @assert length(param_type) == 3 ("Field type requires two arguments, got $(length(param_type)-1) in $(param_type).")
         
         dim = []
-        (dtype, ndims, dims) = param_type[2:end]
+        (dims, dtype) = param_type[2:end]
 
         for d in dims.args[2:end]
             @assert string(d) in keys(closure_vars)
@@ -426,5 +426,4 @@ function from_type_hint(expr::Expr, closure_vars::Dict)
     else
         throw("The following kind of function argument is not yet supported: $param_type")
     end
-
 end

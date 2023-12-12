@@ -1,7 +1,3 @@
-# TODO
-# When using a precompiled Module with PyCall there are issues that arise. See https://github.com/JuliaPy/PyCall.jl#using-pycall-from-julia-modules
-# I've added my conversion attempt to GridTools/notes/Snippets.jl
-# To test the precompilation remove the line below "__precompile__(false)" and attempt a precompilation (manually or via running the tests)
 
 # __precompile__(false)
 module GridTools
@@ -57,7 +53,6 @@ end
 
 Base.length(d::Dimension)::Int64 = 1
 Base.iterate(d::Dimension, state=1) = state==1 ? (d, state+1) : nothing
-Base.getindex(d::Dimension, offset::Integer) = d, offset            # TODO: Unnecessary?
 get_dim_name(d::Dimension) = string(typeof(d).parameters[1])[1:end-1]
 get_dim_kind(d::Dimension) = typeof(d).parameters[2]
 get_dim_ind(source::Tuple{Vararg{Dimension}}, ind::Dimension) = findfirst(x -> x == ind, source)
@@ -139,7 +134,7 @@ julia> field(E2C[1])
 # Error showing value of type Field{Tuple{Dimension{:Cell_, HORIZONTAL}, Dimension{:K_, HORIZONTAL}}, Float64, 2, Tuple{Dimension{:Cell_, HORIZONTAL}, Dimension{:K_, HORIZONTAL}}}:
 # ERROR: CanonicalIndexError: getindex not defined for Field{Tuple{Dimension{:Cell_, HORIZONTAL}, Dimension{:K_, HORIZONTAL}}, Float64, 2, Tuple{Dimension{:Cell_, HORIZONTAL}, Dimension{:K_, HORIZONTAL}}}
 
-struct Field{T <: Union{AbstractFloat, Integer}, N, B_Dim <: Tuple{Vararg{Dimension}}, Dim <: NTuple{N, Dimension}, D <: AbstractArray{T,N}} <: AbstractArray{T,N}
+struct Field{B_Dim <: Tuple{Vararg{Dimension}}, T <: Union{AbstractFloat, Integer}, N, Dim <: NTuple{N, Dimension}, D <: AbstractArray{T,N}} <: AbstractArray{T,N}
     dims::Dim
     data::D
     broadcast_dims::B_Dim
@@ -157,35 +152,35 @@ function Field(dim::Dimension, data::D, broadcast_dims::Union{Dimension,B_Dim} =
     return Field(Tuple(dim), data, Tuple(broadcast_dims), origin = origin)
 end
 
-(field_call::Field)(f_off::Tuple{FieldOffset, <:Integer})::Field = field_call(f_off...)
-function (field_call::Field)(f_off::FieldOffset, ind::Integer = 0)::Field
+(field::Field)(f_off::Tuple{FieldOffset, <:Integer})::Field = field(f_off...)
+function (field::Field)(f_off::FieldOffset, nb_ind::Integer = 0)::Field
 
     conn = OFFSET_PROVIDER[f_off.name]
 
     if typeof(conn) <: Dimension
-        new_offsets = Dict(field_call.dims[i] => field_call.origin[i] for i in 1:length(field_call.dims))
-        new_offsets[conn] = ind
-        return Field(field_call.dims, field_call.data, field_call.broadcast_dims, origin = new_offsets)
+        new_offsets = Dict(field.dims[i] => field.origin[i] for i in 1:length(field.dims))
+        new_offsets[conn] = nb_ind
+        return Field(field.dims, field.data, field.broadcast_dims, origin = new_offsets)
     elseif typeof(conn) <: Connectivity
-        conn_data, f_target = ind == 0 ? (conn.data,f_off.target) : (conn.data[:,ind],f_off.target[1])
-        conn_ind = get_dim_ind(field_call.dims, f_off.source)
+        conn_data, f_target = nb_ind == 0 ? (conn.data,f_off.target) : (conn.data[:,nb_ind],f_off.target[1])
+        conn_ind = get_dim_ind(field.dims, f_off.source)
 
-        @assert maximum(conn_data) <= maximum(axes(field_call)[conn_ind]) "Indices of Connectivity $f_off are out of range for the called field"
+        @assert maximum(conn_data) <= maximum(axes(field)[conn_ind]) "Indices of Connectivity $f_off are out of range for the called field"
         @assert !any(x -> x == 0, conn_data) && minimum(conn_data) > -2 "Illegal indices used in the Connectivity $f_off"
         @assert all(x -> x in f_off.source, conn.source) && all(x -> x in f_off.target, conn.target) "Source or target dimensions of Connectivity $f_off do not match the called field"     
         
-        if ndims(field_call) == 1
-            res = map(x -> x == -1 ? convert(eltype(field_call), 0) : getindex(field_call, Int.(x)), conn_data)
+        if ndims(field) == 1
+            res = map(x -> x == -1 ? convert(eltype(field), 0) : getindex(field, Int.(x)), conn_data)
         else
-            f(slice) = map(x -> x == -1 ? convert(eltype(field_call), 0) : getindex(slice, Int.(x)), conn_data)
+            f(slice) = map(x -> x == -1 ? convert(eltype(field), 0) : getindex(slice, Int.(x)), conn_data)
 
-            sliced_data = eachslice(field_call.data, dims=Tuple(deleteat!(collect(1:ndims(field_call)), conn_ind)))
-            outsize = [size(field_call)...]
+            sliced_data = eachslice(field.data, dims=Tuple(deleteat!(collect(1:ndims(field)), conn_ind)))
+            outsize = [size(field)...]
             Tuple(splice!(outsize, conn_ind, [size(conn_data)...]))
             res = reshape(hcat(map(f, sliced_data)...), Tuple(outsize))
         end
 
-        new_dims = [field_call.dims[1:conn_ind-1]..., f_target..., field_call.dims[conn_ind+1:end]...]
+        new_dims = [field.dims[1:conn_ind-1]..., f_target..., field.dims[conn_ind+1:end]...]
 
         return Field(Tuple(new_dims), res)
     else
@@ -194,15 +189,14 @@ function (field_call::Field)(f_off::FieldOffset, ind::Integer = 0)::Field
 end
 
 # Field struct interfaces
-# (d::Dict{Dimension, Int64})(k::Dimension)::Int64 = d[k]
 Base.axes(F::Field)::Tuple = map((i,j) -> i .+ j, axes(F.data), F.origin)
 Base.size(F::Field)::Tuple = size(F.data)
 Base.convert(t::Type{T}, F::Field) where {T<:Number} = Field(F.dims, convert.(t, F.data), F.broadcast_dims)
-@propagate_inbounds function Base.getindex(F::Field{T,N}, inds::Vararg{Int,N}) where {T,N}
+@propagate_inbounds function Base.getindex(F::Field{BD,T,N}, inds::Vararg{Int,N}) where {BD, T,N}
     new_inds = inds .- F.origin
     return F.data[new_inds...]
 end
-@propagate_inbounds function Base.setindex!(F::Field{T,N}, val, inds::Vararg{Int,N}) where {T,N}
+@propagate_inbounds function Base.setindex!(F::Field{BD, T,N}, val, inds::Vararg{Int,N}) where {BD, T,N}
     new_inds = inds .- F.origin
     F.data[new_inds...] = val
 end
@@ -296,6 +290,7 @@ function backend_execution(backend::Val{:embedded}, fo::FieldOp, args, kwargs, o
 end
 
 function backend_execution(backend::Val{:py}, fo::FieldOp, args, kwargs, out, is_outermost_fo)
+    
     if haskey(FIELD_OPERATORS, fo.name)
         f = FIELD_OPERATORS[fo.name]
     else
