@@ -9,8 +9,8 @@ K_ = Dimension{:K_, HORIZONTAL}
 Edge_ = Dimension{:Edge_, HORIZONTAL}
 Vertex_ = Dimension{:Vertex_, HORIZONTAL}
 V2VDim_ = Dimension{:V2V_, LOCAL}
-V2EDim_ = Dimension{:V2E_, LOCAL} 
-E2VDim_ = Dimension{:E2V_, LOCAL} 
+V2EDim_ = Dimension{:V2E_, LOCAL}
+E2VDim_ = Dimension{:E2V_, LOCAL}
 E2CDim_ = Dimension{:E2C_, LOCAL}
 C2EDim_ = Dimension{:C2E_, LOCAL}
 Cell = Cell_()
@@ -66,6 +66,7 @@ Y = Field((K, Edge), reshape(ones(6), 3, 2))
 mask = cat([true true false true true ; true false false false true ;true true true true true], [true false true false true ; true false false false true ;true true true true true], dims=3)
 mask_offset = Field((Vertex, K, Edge), mask, origin = Dict(Vertex => -2, K => -1))
 
+
 # Tests ------------------------------------------------------------------------------------------------------------------------------
 
 @testset "Testset arithmetic broadcast" begin
@@ -75,7 +76,7 @@ mask_offset = Field((Vertex, K, Edge), mask, origin = Dict(Vertex => -2, K => -1
     result_data[:, :, 1] = [-2.0  2.0;
                             -1.0  3.0;
                              0.0  4.0]
-    
+
     result_data[:, :, 2] = [0.0  4.0;
                             1.0  5.0;
                             2.0  6.0]
@@ -90,10 +91,28 @@ mask_offset = Field((Vertex, K, Edge), mask, origin = Dict(Vertex => -2, K => -1
     @test x .+ y == result_addition
 
     # With Offsets -------------------------------
-    
+
     result_addition_off = Field((Cell, K, Edge), result_data, origin = Dict(Cell => -2, K => 1, Edge => 2))
     @test x_off .+ y_off == result_addition_off
 
+end
+
+@testset "Testset Remap Field info" begin
+	ts_c2e = GridTools.to_type_stable_field_offset(C2E)
+	result = GridTools.compute_remapped_field_info((5, 2), (Edge, K), ts_c2e, GridTools.AllNeighbors(), C2E_offset_provider)
+
+	@test result == ((Cell, C2EDim, K), (12, 2, 2))
+end
+
+@testset "Testset Remap Position" begin
+	nb_ind = 1
+    position = (2, nb_ind, 3)
+    dims = (Cell, C2EDim, K)
+    offset = GridTools.to_type_stable_field_offset(C2E)
+    pos_exists, new_pos = GridTools.remap_position(position, dims, offset, GridTools.AllNeighbors(), C2E_offset_provider)
+
+    @test pos_exists == true
+    @test (edge_to_cell_table[2, nb_ind], position[3]) == new_pos
 end
 
 @testset "Testset Field-Offset call" begin
@@ -122,7 +141,16 @@ end
     end
 
     fo_remapping(cell_values, offset_provider=offset_provider, out = out)
-    @test  out == result_offset_call
+    @test ifelse.(E2C_offset_provider.data .!= -1, out.data, 0) == result_offset_call
+
+	out2 = Field((Edge,), zeros(Float64, 12))
+
+	@field_operator function fo_remapping_single_nb(a::Field{Tuple{Cell_}, Float64})::Field{Tuple{Edge_}, Float64}
+        return a(E2C[2])
+    end
+
+	@enter fo_remapping_single_nb(cell_values, offset_provider=offset_provider, out = out2)
+    @test ifelse.((E2C_offset_provider.data[:, 2] .!= -1), out2.data, 0) == result_offset_call_data[:, 2]
 end
 
 
@@ -169,14 +197,14 @@ end
     result_data[:, :, 1] .= [1.0 4.0 1.0 10.0 13.0;
                              2.0 1.0 1.0  1.0 14.0;
                              3.0 6.0 9.0 12.0 15.0]
-    
+
     result_data[:, :, 2] .= [1.0 1.0 7.0 1.0 13.0;
                              2.0 1.0 1.0 1.0 14.0;
                              3.0 6.0 9.0 12.0 15.0;]
-                                          
+
     result_where = Field((Vertex, K, Edge), result_data, origin = Dict(Vertex => -2, K => -1))
 
-    @test where(mask_offset, X, Y) == result_where 
+    @test where(mask_offset, X, Y) == result_where
 
     # Convert ----------------------------
 

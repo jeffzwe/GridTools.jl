@@ -15,6 +15,8 @@ import Base.Broadcast: Extruded, Style, BroadcastStyle, ArrayStyle ,Broadcasted
 
 export Dimension, DimensionKind, HORIZONTAL, VERTICAL, LOCAL, Field, Connectivity, FieldOffset, neighbor_sum, max_over, min_over, where, concat, @field_operator, slice, copyfield!, get_dim_name, get_dim_kind, get_dim_ind
 
+const SKIP_NEIGHBOR_INDICATOR = -1 # TODO(tehrengruber): move from atlas submodule here
+
 
 # Lib ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -152,40 +154,155 @@ function Field(dim::Dimension, data::D, broadcast_dims::Union{Dimension,B_Dim} =
     return Field(Tuple(dim), data, Tuple(broadcast_dims), origin = origin)
 end
 
-(field::Field)(f_off::Tuple{FieldOffset, <:Integer})::Field = field(f_off...)
-function (field::Field)(f_off::FieldOffset, nb_ind::Integer = 0)::Field
+struct FieldOffsetTS{Name, Source <: Dimension, Target <: Union{Tuple{<:Dimension, <:Dimension}, Tuple{<:Dimension}}}
+end
 
-    conn = OFFSET_PROVIDER[f_off.name]
+to_type_stable_field_offset(offset::FieldOffset) = FieldOffsetTS{Symbol(offset.name), typeof(offset.source), Tuple{map(typeof,offset.target)...}}()
 
-    if typeof(conn) <: Dimension
-        new_offsets = Dict(field.dims[i] => field.origin[i] for i in 1:length(field.dims))
-        new_offsets[conn] = nb_ind
-        return Field(field.dims, field.data, field.broadcast_dims, origin = new_offsets)
-    elseif typeof(conn) <: Connectivity
-        conn_data, f_target = nb_ind == 0 ? (conn.data,f_off.target) : (conn.data[:,nb_ind],f_off.target[1])
-        conn_ind = get_dim_ind(field.dims, f_off.source)
+struct AllNeighbors
+end
 
-        @assert maximum(conn_data) <= maximum(axes(field)[conn_ind]) "Indices of Connectivity $f_off are out of range for the called field"
-        @assert !any(x -> x == 0, conn_data) && minimum(conn_data) > -2 "Illegal indices used in the Connectivity $f_off"
-        @assert all(x -> x in f_off.source, conn.source) && all(x -> x in f_off.target, conn.target) "Source or target dimensions of Connectivity $f_off do not match the called field"     
-        
-        if ndims(field) == 1
-            res = map(x -> x == -1 ? convert(eltype(field), 0) : getindex(field, Int.(x)), conn_data)
-        else
-            f(slice) = map(x -> x == -1 ? convert(eltype(field), 0) : getindex(slice, Int.(x)), conn_data)
-
-            sliced_data = eachslice(field.data, dims=Tuple(deleteat!(collect(1:ndims(field)), conn_ind)))
-            outsize = [size(field)...]
-            Tuple(splice!(outsize, conn_ind, [size(conn_data)...]))
-            res = reshape(hcat(map(f, sliced_data)...), Tuple(outsize))
-        end
-
-        new_dims = [field.dims[1:conn_ind-1]..., f_target..., field.dims[conn_ind+1:end]...]
-
-        return Field(Tuple(new_dims), res)
+function remap_position(
+        current_position::Tuple{Int64, Vararg{Int64}},
+        dims::Tuple{Dimension, Vararg{Dimension}},
+        offset::FieldOffsetTS{OffsetName, SourceDim, Tuple{TargetDim, TargetLocalDim}},
+        nb_ind::AllNeighbors,
+        conn) where {OffsetName, SourceDim <: Dimension, TargetDim <:Dimension, TargetLocalDim <: Dimension}  # TODO: restrict conn to type ::Connectivity
+    if dims[1] == TargetDim()  # since we are mapping indices not field here the target source are flipped
+        ind, actual_nb_ind, tail_position... = current_position
+        _, local_dim, tail_dims... = dims
+        #@assert local_dim isa Dimension && string(typeof(local_dim).parameters[1]) == (string(OffsetName)*"_") && typeof(local_dim).parameters[2] == LOCAL
+        new_ind = conn.data[ind, actual_nb_ind]
     else
-        throw("The datatype: $(typeof(conn)) is not supported for within an offset_provider")
+        new_ind, tail_position... = current_position
+        dim, tail_dims... = dims
     end
+
+    tail_position_exists, new_tail_position = remap_position(tail_position, tail_dims, offset, nb_ind, conn)
+    position_exists = (new_ind != SKIP_NEIGHBOR_INDICATOR) && tail_position_exists
+    return position_exists, (new_ind, new_tail_position...)
+end
+function remap_position(
+        current_position::Tuple{Int64, Vararg{Int64}},
+        dims::Tuple{Dimension, Vararg{Dimension}},
+        offset::FieldOffsetTS{OffsetName, SourceDim, Tuple{TargetDim, TargetLocalDim}},
+        nb_ind::Int64,
+        conn) where {OffsetName, SourceDim <: Dimension, TargetDim <:Dimension, TargetLocalDim <: Dimension}  # TODO: restrict conn to type ::Connectivity
+    if dims[1] == TargetDim()  # since we are mapping indices not field here the target source are flipped
+        ind, tail_position... = current_position
+        _, tail_dims... = dims
+        new_ind = conn.data[ind, nb_ind]
+    else
+        new_ind, tail_position... = current_position
+        dim, tail_dims... = dims
+    end
+
+    tail_position_exists, new_tail_position = remap_position(tail_position, tail_dims, offset, nb_ind, conn)
+    position_exists = (new_ind != SKIP_NEIGHBOR_INDICATOR) && tail_position_exists
+    return position_exists, (new_ind, new_tail_position...)
+end
+remap_position(current_position::Tuple{}, dims::Tuple{}, offset::FieldOffsetTS, nb_ind::Union{Int64, AllNeighbors}, conn) = (true, ())
+
+
+function compute_remapped_field_info(
+        field_size::Tuple{Int64, Vararg{Int64}},
+        dims::Tuple{Dimension, Vararg{Dimension}},
+        offset::FieldOffsetTS{OffsetName, SourceDim, Tuple{TargetDim, TargetLocalDim}},
+        nb_ind::Union{Int64, AllNeighbors},
+        conn) where {OffsetName, SourceDim <: Dimension, TargetDim <:Dimension, TargetLocalDim <: Dimension}
+    length, tail_size... = field_size
+    dim, tail_dims... = dims
+    if dim == SourceDim()
+        if nb_ind == AllNeighbors()
+            new_dims_part = (TargetDim(), TargetLocalDim())
+            # TODO: restrict indices to only what is needed
+            new_size_part = size(conn.data)  # we just take the size of the connecitvity
+        else
+            new_dims_part = (TargetDim(),)
+            # TODO: restrict indices to only what is needed
+            new_size_part = size(conn.data)[1]  # we just take the size of the connecitvity
+        end
+    else
+        new_dims_part = (dim,)
+        new_size_part = (length,)
+    end
+
+    new_tail_dims, new_tail_size = compute_remapped_field_info(tail_size, tail_dims, offset, nb_ind, conn)
+    new_dims = (new_dims_part..., new_tail_dims...)
+    new_size = (new_size_part..., new_tail_size...)
+    return new_dims, new_size
+end
+compute_remapped_field_info(
+    field_size::Tuple{},
+    dims::Tuple{},
+    offset::FieldOffsetTS,
+    nb_ind::Union{Int64, AllNeighbors},
+    conn
+)= ((), ())
+
+function remap_ts(
+        field::Field,
+        offset::FieldOffsetTS{OffsetName, SourceDim, Tuple{TargetDim}},
+        nb_ind::Int64)::Field where {OffsetName, SourceDim <: Dimension, TargetDim <:Dimension}
+    conn = OFFSET_PROVIDER[string(OffsetName)]
+
+    new_offsets = Dict(field.dims[i] => field.origin[i] for i in 1:length(field.dims))
+    new_offsets[conn] = nb_ind
+    return Field(field.dims, field.data, field.broadcast_dims, origin = new_offsets)
+end
+
+
+function remap_broadcast_dims(
+    broadcast_dims::Tuple{T, Vararg{Dimension}},
+    offset::FieldOffsetTS{OffsetName, SourceDim, Tuple{TargetDim, TargetLocalDim}},
+    nb_ind::Union{Int64, AllNeighbors}
+) where {T <: Dimension, OffsetName, SourceDim <: Dimension, TargetDim <:Dimension, TargetLocalDim <: Dimension}
+    dim, dim_tail... = broadcast_dims
+    if dim == SourceDim()
+        if nb_ind == AllNeighbors()
+            (TargetDim(), TargetLocalDim(), remap_broadcast_dims(dim_tail, offset, nb_ind)...)
+        else
+            (TargetDim(), remap_broadcast_dims(dim_tail, offset, nb_ind)...)
+        end
+    else
+        (dim, remap_broadcast_dims(dim_tail, offset, nb_ind)...)
+    end
+end
+
+remap_broadcast_dims(broadcast_dims::Tuple{}, offset::FieldOffsetTS, nb_ind::Union{Int64, AllNeighbors}) = ()
+
+
+function remap_ts(
+        field::Field,
+        offset::FieldOffsetTS{OffsetName, SourceDim, Tuple{TargetDim, TargetLocalDim}},
+        nb_ind::Union{Int64, AllNeighbors} = AllNeighbors())::Field  where {OffsetName, SourceDim <: Dimension, TargetDim <:Dimension, TargetLocalDim <: Dimension}
+    conn = OFFSET_PROVIDER[string(OffsetName)]
+
+    # compute new indices
+    out_field_dims, out_field_size = compute_remapped_field_info(size(field.data), field.dims, offset, nb_ind, conn)
+    #out_field = map(position -> begin
+    #    neighbor_exists, new_position = remap_position(Tuple(position), out_field_dims, offset, nb_ind, conn)
+    #    if neighbor_exists
+    #        field.data[new_position...]
+    #    else
+    #        eltype(field.data)(0)
+    #    end
+    #end, CartesianIndices(map(len -> Base.OneTo(len), out_field_size)))
+    out_field = Array{eltype(field.data)}(undef, out_field_size)
+    for position in eachindex(IndexCartesian(), out_field)
+        neighbor_exists, new_position = remap_position(Tuple(position), out_field_dims, offset, nb_ind, conn)
+        if neighbor_exists
+            out_field[position] = field.data[new_position...]
+        end
+    end
+    # todo: origin
+    return Field(out_field_dims, out_field, remap_broadcast_dims(field.broadcast_dims, offset, nb_ind))
+end
+
+(field::Field)(f_off::Tuple{FieldOffset, <:Integer})::Field = field(f_off...)
+function (field::Field)(f_off::FieldOffset, nb_ind::Union{Int64, AllNeighbors} = AllNeighbors())::Field
+    result = remap_ts(field, to_type_stable_field_offset(f_off), nb_ind)
+    return result
 end
 
 # Field struct interfaces
@@ -218,7 +335,7 @@ Connectivity(Integer[1 1; 1 1; 1 1], Dimension{:Cell_, HORIZONTAL}(), Dimension{
 ```
 """
 struct Connectivity
-    data::Array{Integer, 2}
+    data::Array{Int64, 2}
     source::Dimension
     target::Dimension
     dims::Integer
@@ -272,8 +389,9 @@ function (fo::FieldOp)(args...; offset_provider::Dict{String, Union{Connectivity
         out = backend_execution(Val{Symbol(backend)}(), fo, args, kwargs, out, is_outermost_fo)
         global OFFSET_PROVIDER = nothing
     else
-        @assert isnothing(out)
-        @assert isempty(offset_provider)
+        # TODO(tehrengruber): this breaks when fo execution fails and no cleanup is done. use try finally block
+        #@assert isnothing(out)
+        #@assert isempty(offset_provider)
         out = backend_execution(Val{Symbol(backend)}(), fo, args, kwargs, out, is_outermost_fo)
     end
 
