@@ -3,9 +3,15 @@
 
 ```@docs
 Dimension
+FieldOffset
 Field
 Connectivity
-GridTools.where
-neighbor_sum
 GridTools.broadcast
+neighbor_sum
+max_over
+min_over
+GridTools.where
+GridTools.concat
+copyfield!
+@field_operator
 ```

@@ -111,6 +111,7 @@ julia> concat(f1, f2)
  1.0  1.0  1.0
  1.0  5.0  1.0
  1.0  1.0  1.0
+```
 """
 function concat(f1::Field, f2::Field) #TODO check if this implementation alines with the future implementation in gt4py
     @assert all(xor.(isnan.(f1), isnan.(f2))) "The matrices $f1 and $f2 are not combineable in a concat operation due to overlapping values."

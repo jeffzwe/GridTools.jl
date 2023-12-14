@@ -149,7 +149,7 @@ end
         return a(E2C[2])
     end
 
-	@enter fo_remapping_single_nb(cell_values, offset_provider=offset_provider, out = out2)
+	fo_remapping_single_nb(cell_values, offset_provider=offset_provider, out = out2)
     @test ifelse.((E2C_offset_provider.data[:, 2] .!= -1), out2.data, 0) == result_offset_call_data[:, 2]
 end
 

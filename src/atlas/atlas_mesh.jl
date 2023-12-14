@@ -1,19 +1,9 @@
 ENV["PYCALL_JL_RUNTIME_PYTHON"] = Sys.which("python3.10")
-ENV["PYTHONBREAKPOINT"] = "pdb.set_trace"
+# ENV["PYTHONBREAKPOINT"] = "pdb.set_trace"
 
 using PyCall
 
 atlas = pyimport("atlas4py")
-gtx = pyimport("gt4py.next")
-
-# Use when Atlas is a module
-# const atlas = PyNULL()
-# const gtx = PyNULL()
-
-# function __init__()
-#     copy!(atlas, pyimport("atlas4py"))
-#     copy!(gtx, pyimport("gt4py.next"))
-# end
 
 const rpi = 2.0 * asin(1.0)
 const _deg2rad = 2.0 * rpi / 360.0

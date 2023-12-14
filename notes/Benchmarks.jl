@@ -2,7 +2,7 @@ using BenchmarkTools
 using Profile
 
 
-# # Benchmark and Profiling for simple array/field arithmetic ########################################################################################################
+# Benchmark and Profiling for simple array/field arithmetic ########################################################################################################
 
 # add3(a, b, c) = a.+b.+c
 # add3(rand(10,10), rand(10,10), rand(10,10))

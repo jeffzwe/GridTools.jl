@@ -134,69 +134,34 @@ copyfield!(state_next.vel, state.vel)
 tmp_fields["tmp_vertex_1"] .= reshape(collect(0.:mesh.num_level-1), (1, mesh.num_level))
 nabla_z(tmp_fields["tmp_vertex_1"], level_indices, mesh.num_level, out=tmp_fields["tmp_vertex_2"], offset_provider = mesh.offset_provider)
 
-upwind_scheme(
-            state.rho,
-            δt,
-            mesh.vol,
-            metric.gac,
-            state.vel[1],
-            state.vel[2],
-            state.vel[3],
-            mesh.pole_edge_mask,
-            mesh.dual_face_orientation,
-            mesh.dual_face_normal_weighted_x,
-            mesh.dual_face_normal_weighted_y,
-            out = state_next.rho,
-            offset_provider = mesh.offset_provider
-        )
+for i in 1:niter
 
-@profile for i in 1:10
     upwind_scheme(
-            state.rho,
-            δt,
-            mesh.vol,
-            metric.gac,
-            state.vel[1],
-            state.vel[2],
-            state.vel[3],
-            mesh.pole_edge_mask,
-            mesh.dual_face_orientation,
-            mesh.dual_face_normal_weighted_x,
-            mesh.dual_face_normal_weighted_y,
-            out = state_next.rho,
-            offset_provider = mesh.offset_provider
-        )
+        state.rho,
+        δt,
+        mesh.vol,
+        metric.gac,
+        state.vel[1],
+        state.vel[2],
+        state.vel[3],
+        mesh.pole_edge_mask,
+        mesh.dual_face_orientation,
+        mesh.dual_face_normal_weighted_x,
+        mesh.dual_face_normal_weighted_y,
+        out = state_next.rho,
+        offset_provider = mesh.offset_provider
+    )
+
+    println("Timestep $i")
+
+    # TODO: make a function out of this switch
+    temp = state
+    global state = state_next
+    global state_next = temp
+
+    update_periodic_layers(mesh, state.rho)
 end
-Profile.print()
 
-# for i in 1:niter
-
-#     upwind_scheme(
-#         state.rho,
-#         δt,
-#         mesh.vol,
-#         metric.gac,
-#         state.vel[1],
-#         state.vel[2],
-#         state.vel[3],
-#         mesh.pole_edge_mask,
-#         mesh.dual_face_orientation,
-#         mesh.dual_face_normal_weighted_x,
-#         mesh.dual_face_normal_weighted_y,
-#         out = state_next.rho,
-#         offset_provider = mesh.offset_provider,
-#         backend = "py"
-#     )
-
-#     # println("Timestep $i")
-
-#     temp = state
-#     global state = state_next
-#     global state_next = temp
-
-#     update_periodic_layers(mesh, state.rho)
-# end
-
-# println("min max sum of final rho = $(minimum(state.rho.data)) , $(maximum(state.rho.data)) , $(sum(state.rho.data))")
-# println("Final Vel0 sum after $niter iterations: $(sum(state.vel[1].data))")
-# println("Final Vel1 sum after $niter iterations: $(sum(state.vel[2].data))")
+println("min max sum of final rho = $(minimum(state.rho.data)) , $(maximum(state.rho.data)) , $(sum(state.rho.data))")
+println("Final Vel0 sum after $niter iterations: $(sum(state.vel[1].data))")
+println("Final Vel1 sum after $niter iterations: $(sum(state.vel[2].data))")

@@ -46,6 +46,7 @@ In order to create a local dimension one needs to adhere to a particular naming 
 ```julia-repl
 julia> V2EDim_ = Dimension(:V2E_, LOCAL)
 julia> V2EDim = V2EDim_()
+```
 """
 struct Dimension{name, kind <: DimensionKind} end
 
@@ -124,18 +125,10 @@ The call itself must happen in a field_operator since it needs the functionality
 julia> E2C = FieldOffset("E2C", source=Cell, target=(Edge, E2CDim))
 julia> field = Field(Cell, ones(5))
 
-...
 julia> field(E2C)
 julia> field(E2C[1])
-...
 ```
 """
-# TODO: check for #dimension at compile time and not runtime
-# TODO: <: AbstractArray{T,N} is not needed... but then we have to define our own length and iterate function for Fields
-# TODO sequence of types: Do BD, T, N. 
-# Error showing value of type Field{Tuple{Dimension{:Cell_, HORIZONTAL}, Dimension{:K_, HORIZONTAL}}, Float64, 2, Tuple{Dimension{:Cell_, HORIZONTAL}, Dimension{:K_, HORIZONTAL}}}:
-# ERROR: CanonicalIndexError: getindex not defined for Field{Tuple{Dimension{:Cell_, HORIZONTAL}, Dimension{:K_, HORIZONTAL}}, Float64, 2, Tuple{Dimension{:Cell_, HORIZONTAL}, Dimension{:K_, HORIZONTAL}}}
-
 struct Field{B_Dim <: Tuple{Vararg{Dimension}}, T <: Union{AbstractFloat, Integer}, N, Dim <: NTuple{N, Dimension}, D <: AbstractArray{T,N}} <: AbstractArray{T,N}
     dims::Dim
     data::D
@@ -143,6 +136,7 @@ struct Field{B_Dim <: Tuple{Vararg{Dimension}}, T <: Union{AbstractFloat, Intege
     origin::NTuple{N, Int64}
 end
 
+# TODO: check for #dimension at compile time and not runtime
 function Field(dims::Dim, data::D, broadcast_dims::B_Dim = dims; origin::Dict{<:Dimension, Int64} = Dict{Dimension, Int64}()) where {T <: Union{AbstractFloat, Integer}, N, B_Dim <: Tuple{Vararg{Dimension}}, Dim <: NTuple{N, Dimension}, D <: AbstractArray{T,N}}
     if ndims(data) != 0 @assert length(dims) == ndims(data) end
     offsets = Tuple([get(origin, dim, 0) for dim in dims])
@@ -366,6 +360,7 @@ Takes a copies the data from a source field to a target fields (equivalent to ta
 # Examples
 ```julia-repl
 julia> copyfields!((a, b), (c, d))
+```
 """
 function copyfield!(target::Tuple{Vararg{Field}}, source::Tuple{Vararg{Field}})
     for i in 1:length(target)
@@ -481,7 +476,7 @@ end
 
 macro module_vars()
     return esc(quote
-            module_vars = Dict(name => Core.eval(@__MODULE__, name) for name in names(@__MODULE__)[6:end])
+            module_vars = Dict(name => Core.eval(@__MODULE__, name) for name in names(@__MODULE__))
             local_vars = Base.@locals
             merge(module_vars, local_vars, GridTools.builtin_op)
         end)
@@ -496,7 +491,6 @@ The field_operator macro takes a function definition and creates a run environme
 # Examples
 ```julia-repl
 julia> @field_operator addition(x::Int64) = x + x
-...
 ```
 """
 macro field_operator(expr::Expr)
